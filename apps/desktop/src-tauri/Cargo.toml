@@ -2,7 +2,7 @@
 name = "study-sidecar-desktop"
 version = "0.1.0"
 description = "Study Partner companion window"
-authors = ["OpenAWO"]
+authors = ["Study Sidecar"]
 edition = "2021"
 
 [lib]

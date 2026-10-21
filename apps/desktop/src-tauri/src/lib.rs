@@ -2,13 +2,14 @@ use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 use std::time::Duration;
 use std::{env, fs, path::PathBuf};
-use tauri::{dpi::LogicalSize, Emitter, Manager};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 static HTTP: LazyLock<reqwest::blocking::Client> = LazyLock::new(|| {
     reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(3))
+        .build()
         .expect("valid reqwest client")
 });
 
