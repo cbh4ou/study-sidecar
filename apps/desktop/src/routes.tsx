@@ -5,6 +5,8 @@ import {
 	Link,
 	Outlet,
 } from "@tanstack/react-router";
+import { invoke } from "@tauri-apps/api/core";
+import { useEffect } from "react";
 import { MentorHud } from "./components/MentorHud";
 import { desktopRoutes } from "./lib/routes";
 import {
@@ -45,6 +47,12 @@ function AppFrame() {
 }
 
 function Settings() {
+	useEffect(() => {
+		if ("__TAURI__" in window)
+			void invoke("set_hud_variant", { variant: "expanded" }).catch(
+				() => undefined,
+			);
+	}, []);
 	const { state, setMode } = useHudMessages();
 	const { voice, toggleListening, toggleMute } = useVoice();
 	const { data: tutorModels } = useTutorModels();

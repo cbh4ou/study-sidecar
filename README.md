@@ -9,7 +9,7 @@ Install [Bun](https://bun.sh) and run `bun install`. The voice worker also uses
 bun run sidecar up --with-voice --with-desktop
 ```
 
-`up` starts the daemon on port `4321` with `--harness auto`. Use `--harness omp|pi|auto` to choose the session source and `--port <port>` to change the daemon port. `--with-voice` starts the local worker and publishes `.run/voice.json` after `ws://127.0.0.1:8879` is reachable. `--with-desktop` starts the desktop dev server; if its dependencies are unavailable, the supervisor opens the daemon URL with `xdg-open` instead. `bun run sidecar status` reports child state, restart counts, and a redacted daemon-token marker; `bun run sidecar down` stops the recorded process tree.
+`up` starts the daemon on port `4321` with `--harness auto`. Use `--harness omp|pi|claude|codex|hermes|auto` to choose the session source and `--port <port>` to change the daemon port. Hermes reads the latest session from `$HERMES_HOME/state.db` (or `~/.hermes/state.db`) through a read-only SQLite connection. `--with-voice` starts the local worker and publishes `.run/voice.json` after `ws://127.0.0.1:8879` is reachable. `--with-desktop` starts the desktop dev server; if its dependencies are unavailable, the supervisor opens the daemon URL with `xdg-open` instead. `bun run sidecar status` reports child state, restart counts, and a redacted daemon-token marker; `bun run sidecar down` stops the recorded process tree.
 
 The daemon port is configurable via `--port`.
 
@@ -46,7 +46,7 @@ Speech starts and ends are reported as VAD events; 600 ms of silence finalizes a
 
 ## Tutor harness
 
-The tutor is a real agent, not a bare LLM call: `apps/daemon/src/tutor/harness.ts` opens its own isolated Pi Durable harness (`@earendil-works/pi-durable`) rooted in `~/.study-sidecar/` — `tutor.sqlite` for the durable transcript and `workspace/scratch/` for 0600 throwaway notes and Mermaid canvases. Tutor directories are 0700. It never opens the watched sessions' storage; those remain read-only byte-offset JSONL tailers plus the optional read-only Durable SSE stream. A separate tool may read at most 64 KiB from a real file contained by the attached repository.
+The tutor is a real agent, not a bare LLM call: `apps/daemon/src/tutor/harness.ts` opens its own isolated Pi Durable harness (`@earendil-works/pi-durable`) rooted in `~/.study-sidecar/` — `tutor.sqlite` for the durable transcript and `workspace/scratch/` for 0600 throwaway notes and Mermaid canvases. Tutor directories are 0700. It never opens a watched session in the Pi Durable harness; Pi, OMP, Claude, and Codex use read-only byte-offset JSONL tailers, Hermes uses a read-only SQLite connection, and optional Durable SSE is read-only. SQLite's WAL protocol can create or update shared-memory coordination files even for read-only clients, so Hermes cannot satisfy a literal zero-lock requirement. A separate tool may read at most 64 KiB from a real file contained by the attached repository.
 
 The model comes from the Pi registry (`~/.pi/agent/models-store.json` + `auth.json`) through a custom pi-ai provider. Study exchanges use native durable compaction and six typed documents (`hud_state`, `scratchpad_diagram`, `socratic_quiz`, `steering_prompt`, `research_scratchpad`, `tutor_trace`) streamed to the HUD. The system prompt includes the active mode, redacted session context, OKF hints, and complete bundled and user `SKILL.md` instructions. Its six scoped tools are `read_watched_repo_file`, `search_okf_memory`, `save_okf_concept_card`, `write_study_scratchpad`, `update_mermaid_canvas`, and `emit_hud_artifacts`; `search_okf_memory` can also call an installed `notebooklm` CLI against tutor-owned configuration.
 
@@ -57,6 +57,8 @@ saved choice for a launch.
 
 Permanent concepts use OKF v0.2 Markdown under `~/.study-sidecar/.okf/concepts/`. `qmd` collection names include a hash of each bundle root, preventing cross-project collection reuse; the deterministic fallback remains available when `qmd` is absent.
 `qmd`, `notebooklm`, model credentials, cloud voice credentials, and local GPU models remain user-installed integrations. Authenticate them manually; the Sidecar never logs in or copies credentials. Without `qmd`, OKF queries use the bounded keyword fallback. Without `notebooklm`, the optional NotebookLM branch returns an explicit tool error.
+
+The desktop uses Rsbuild 2. The sub-15 ms memory benchmark covers the keyword fallback; `qmd` was unavailable in the development environment and its subprocess latency is not yet verified. The local GPU voice pipeline and the combined 55 MB memory target also need measurement on the target machine before those acceptance gates can be claimed.
 
 ## Development
 

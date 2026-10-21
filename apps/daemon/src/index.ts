@@ -70,7 +70,7 @@ if (
 	!Number.isFinite(deadAirSeconds)
 ) {
 	throw new Error(
-		`Usage: --harness pi|omp|codex|claude|auto --port ${DEFAULT_PORT} --dead-air-seconds 15 [--token <token>] [--model <provider/model>]`,
+		`Usage: --harness pi|omp|codex|claude|hermes|auto --port ${DEFAULT_PORT} --dead-air-seconds 15 [--token <token>] [--model <provider/model>]`,
 	);
 }
 

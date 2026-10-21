@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -30,6 +31,95 @@ describe("newestSession", () => {
 		expect(
 			await newestSession(sessionDirectories(home), "auto"),
 		).toBeUndefined();
+	});
+	test("finds a Hermes SQLite session without changing its transcript", async () => {
+		const home = await temporaryHome();
+		const directory = join(home, ".hermes");
+		await mkdir(directory);
+		const path = join(directory, "state.db");
+		const db = new Database(path);
+		db.exec(
+			"CREATE TABLE sessions (id TEXT PRIMARY KEY, cwd TEXT, title TEXT)",
+		);
+		db.exec(
+			"CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT, tool_calls TEXT, tool_name TEXT, timestamp REAL, reasoning TEXT)",
+		);
+		db.query("INSERT INTO sessions VALUES (?, ?, ?)").run(
+			"h1",
+			"/tmp/project",
+			"Learn tests",
+		);
+		db.query("INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
+			1,
+			"h1",
+			"user",
+			"Why test?",
+			null,
+			null,
+			Date.now() / 1000,
+			null,
+		);
+		db.close();
+		const before = await Bun.file(path).bytes();
+		const candidate = await newestSession(sessionDirectories(home), "hermes");
+		expect(candidate?.sessionId).toBe("h1");
+		const events: string[] = [];
+		const sessions: string[] = [];
+		const manager = new IngestManager(
+			{
+				onEvent: (event) => events.push(event.headline),
+				onSession: (session) => sessions.push(session.id),
+				broadcast() {},
+				reset() {},
+				watched() {},
+				hydrate() {},
+			},
+			{ harness: "hermes", directories: sessionDirectories(home) },
+		);
+		try {
+			await manager.rescan();
+			expect(sessions).toEqual(["h1"]);
+			expect(events).toEqual(["User: Why test?"]);
+			expect(await Bun.file(path).bytes()).toEqual(before);
+			const writer = new Database(path);
+			writer
+				.query("INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+				.run(
+					2,
+					"h1",
+					"tool",
+					"42 lines of output",
+					null,
+					"read",
+					Date.now() / 1000 + 1,
+					null,
+				);
+			writer.close();
+			await Bun.sleep(550);
+			expect(events.at(-1)).toContain("[receipt]");
+			const next = new Database(path);
+			next
+				.query("INSERT INTO sessions VALUES (?, ?, ?)")
+				.run("h2", "/tmp/next", "Next task");
+			next
+				.query("INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+				.run(
+					3,
+					"h2",
+					"user",
+					"New task",
+					null,
+					null,
+					Date.now() / 1000 + 2,
+					null,
+				);
+			next.close();
+			await manager.rescan();
+			expect(sessions).toEqual(["h1", "h2"]);
+			expect(events.at(-1)).toBe("User: New task");
+		} finally {
+			manager.stop();
+		}
 	});
 });
 

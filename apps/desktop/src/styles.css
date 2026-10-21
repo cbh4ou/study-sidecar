@@ -116,6 +116,17 @@ main {
 	margin: auto;
 	padding: 16px;
 }
+html.tauri.hud-collapsed main {
+	display: flex;
+	width: 100%;
+	height: 100vh;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+}
+html.tauri.hud-collapsed .app-header {
+	display: none;
+}
 .app-header,
 .app-header > div,
 nav,
@@ -153,10 +164,17 @@ h2,
 	color: #9daabd;
 }
 .compact-copy {
-	gap: 12px;
+	gap: 8px;
 	max-width: 100%;
 	overflow: hidden;
 	white-space: nowrap;
+}
+.compact-session {
+	flex: 1;
+}
+.compact-voice {
+	flex: none;
+	color: #aab9c9;
 }
 .compact-copy span {
 	min-width: 0;

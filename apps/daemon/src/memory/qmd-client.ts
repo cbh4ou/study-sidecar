@@ -70,18 +70,19 @@ export async function indexQmd(
 	root: string,
 	bundle: "learner" | "repo",
 	stateRoot: string,
-): Promise<void> {
+): Promise<boolean> {
 	const key = `${stateRoot}:${bundle}:${root}`;
 	const collection = qmdCollection(root, bundle);
 	if (!registered.has(key)) {
-		await run(
+		const added = await run(
 			["collection", "add", root, "--name", collection],
 			root,
 			stateRoot,
 		);
+		if (added === undefined) return false;
 		registered.add(key);
 	}
-	await run(["update"], root, stateRoot);
+	return (await run(["update"], root, stateRoot)) !== undefined;
 }
 
 export async function ensureIndexed(
@@ -91,8 +92,7 @@ export async function ensureIndexed(
 ): Promise<void> {
 	const key = `${stateRoot}:${bundle}:${root}`;
 	if (indexed.has(key)) return;
-	await indexQmd(root, bundle, stateRoot);
-	indexed.add(key);
+	if (await indexQmd(root, bundle, stateRoot)) indexed.add(key);
 }
 
 export async function qmdPaths(

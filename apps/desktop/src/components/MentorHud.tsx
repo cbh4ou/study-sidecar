@@ -71,7 +71,7 @@ function eventFilePath(event: object): string | undefined {
 }
 
 const ISLAND_SIZE: Record<"compact" | "ambient" | "expanded", SizePresets> = {
-	compact: "compact",
+	compact: "compactLong",
 	ambient: "compactLong",
 	expanded: "ultra",
 };
@@ -232,8 +232,13 @@ export function MentorHud() {
 		if (save.isSuccess) setSavedPath(save.data?.path ?? "Saved");
 	}, [save.isSuccess, save.data]);
 	useEffect(() => {
-		if ("__TAURI__" in window)
-			void invoke("set_hud_variant", { variant }).catch(() => undefined);
+		if (!("__TAURI__" in window)) return;
+		document.documentElement.classList.toggle(
+			"hud-collapsed",
+			variant !== "expanded",
+		);
+		void invoke("set_hud_variant", { variant }).catch(() => undefined);
+		return () => document.documentElement.classList.remove("hud-collapsed");
 	}, [variant]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: speak is unstable and adding it would replay tutor audio on every provider render; latestMessage is the sole trigger
@@ -284,21 +289,36 @@ export function MentorHud() {
 		setDraft("");
 	};
 
-	const compactVoice = voice.muted
-		? "Muted"
-		: voice.vad
-			? "Listening to speech"
-			: voice.playback
-				? "Tutor speaking"
-				: `Listening (${state.activeMode || daemonState?.mode || "co-pilot"})`;
+	const source = state.session?.session_file?.includes("/.omp/")
+		? "OMP"
+		: state.session?.session_file?.includes("/.pi/")
+			? "Pi"
+			: state.session?.session_file?.includes("/.claude/")
+				? "Claude"
+				: state.session?.session_file?.includes("/.codex/")
+					? "Codex"
+					: state.session?.session_file?.endsWith("/state.db")
+						? "Hermes"
+						: "Session";
+	const compactVoice =
+		voice.status === "offline"
+			? "Voice off"
+			: voice.muted
+				? "Muted"
+				: voice.vad
+					? "Speech"
+					: voice.playback
+						? "Speaking"
+						: voice.listening
+							? "Listening"
+							: "Mic off";
 	const compact = (
-		<div className="compact-copy">
-			<span>
-				{daemonState?.watching ? "🟢" : "⚪"} Watching Pi:{" "}
+		<div className="compact-copy" title={latestEvent?.headline ?? connection}>
+			<span className="compact-session">
+				{daemonState?.watching ? "🟢" : "⚪"} {source} ·{" "}
 				{state.session?.project ?? "waiting"}
 			</span>
-			<span>🎙 {compactVoice}</span>
-			<span>Last: {latestEvent?.headline ?? connection}</span>
+			<span className="compact-voice">{compactVoice}</span>
 			{state.errors.length ? (
 				<span className="hud-error-status" role="status" aria-live="polite">
 					⚠ {state.errors.length} error{state.errors.length === 1 ? "" : "s"}
