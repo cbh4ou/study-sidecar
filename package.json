@@ -1,0 +1,17 @@
+{
+  "name": "study-sidecar",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "check": "biome check apps/daemon/src apps/desktop/src bin",
+    "test": "bun test apps/daemon/src apps/desktop/src bin",
+    "sidecar": "bun bin/sidecar.ts",
+    "gen-protocol": "bun scripts/gen-protocol.ts",
+    "typecheck": "bun run --cwd apps/desktop typecheck"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.15"
+  }
+}

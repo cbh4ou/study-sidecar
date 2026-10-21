@@ -1,0 +1,26 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+	"files": {
+		"includes": [
+			"apps/daemon/src/**",
+			"apps/desktop/src/**",
+			"bin/**",
+			"!apps/desktop/src/styles.css",
+			"!**/node_modules",
+			"!**/dist",
+			"!**/src-tauri"
+		]
+	},
+	"linter": { "enabled": true },
+	"formatter": { "enabled": true },
+	"overrides": [
+		{
+			"includes": [
+				"apps/desktop/src/components/ui/**",
+				"apps/desktop/src/components/ai-elements/**",
+				"apps/desktop/src/hooks/**"
+			],
+			"linter": { "enabled": false }
+		}
+	]
+}

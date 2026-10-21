@@ -1,0 +1,25 @@
+[package]
+name = "study-sidecar-desktop"
+version = "0.1.0"
+description = "Study Partner companion window"
+authors = ["OpenAWO"]
+edition = "2021"
+
+[lib]
+name = "study_sidecar_desktop_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "study-sidecar-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2" }
+
+[dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2" }
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-global-shortcut = "2"

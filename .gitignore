@@ -1,0 +1,17 @@
+node_modules/
+.run/
+.env
+.env.*
+!.env.example
+dist/
+.rsbuild/
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+apps/desktop/src-tauri/target/
+*.log

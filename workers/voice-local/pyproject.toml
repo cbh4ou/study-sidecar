@@ -1,0 +1,20 @@
+[project]
+name = "study-sidecar-voice-local"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["websockets"]
+
+[project.optional-dependencies]
+voice = [
+  "pydantic>=2",
+  "faster-whisper",
+  "silero-vad",
+  "kokoro-onnx",
+]
+
+[dependency-groups]
+test = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
