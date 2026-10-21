@@ -9,7 +9,9 @@ voice = [
   "pydantic>=2",
   "faster-whisper",
   "silero-vad",
-  "kokoro-onnx",
+  "kokoro-onnx[gpu]",
+  "nvidia-cublas-cu12>=12,<13",
+  "nvidia-cudnn-cu12>=9,<10",
 ]
 
 [dependency-groups]

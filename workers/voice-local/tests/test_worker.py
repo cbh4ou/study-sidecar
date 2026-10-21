@@ -5,6 +5,7 @@ import json
 import os
 import sys
 from array import array
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -40,7 +41,17 @@ class FakeKokoro:
         return [0.25] * 20_000, 24_000
 
 
-def test_whisper_defaults_use_cuda_float16_when_available(
+@pytest.fixture
+def fake_kokoro_assets(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    model = tmp_path / "model.onnx"
+    voices = tmp_path / "voices.bin"
+    model.touch()
+    voices.touch()
+    monkeypatch.setenv("KOKORO_MODEL_PATH", str(model))
+    monkeypatch.setenv("KOKORO_VOICES_PATH", str(voices))
+
+
+def test_whisper_defaults_use_cuda_int8_float16_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class CTranslate:
@@ -53,7 +64,7 @@ def test_whisper_defaults_use_cuda_float16_when_available(
     monkeypatch.setitem(sys.modules, "ctranslate2", CTranslate)
     server.whisper_settings.cache_clear()
 
-    assert server.whisper_settings() == ("cuda", "float16")
+    assert server.whisper_settings() == ("cuda", "int8_float16")
 
     server.whisper_settings.cache_clear()
 
@@ -102,7 +113,9 @@ def test_energy_vad_reports_speech_then_final_transcript(monkeypatch: pytest.Mon
     asyncio.run(check())
 
 
-def test_interrupt_cancels_running_speech(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_interrupt_cancels_running_speech(
+    monkeypatch: pytest.MonkeyPatch, fake_kokoro_assets: None
+) -> None:
     async def check() -> None:
         monkeypatch.setattr(server, "Kokoro", FakeKokoro)
         socket = Socket(block_audio=True)
@@ -140,6 +153,16 @@ def test_guarded_import_fallbacks_report_capabilities(monkeypatch: pytest.Monkey
     asyncio.run(check())
 
 
+def test_missing_kokoro_weights_are_reported_unavailable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(server, "Kokoro", FakeKokoro)
+    monkeypatch.setenv("KOKORO_MODEL_PATH", str(tmp_path / "missing.onnx"))
+    monkeypatch.setenv("KOKORO_VOICES_PATH", str(tmp_path / "missing.bin"))
+
+    assert server.VoiceWorker().tts_available is False
+
+
 def test_audio_base64_round_trip() -> None:
     raw = pcm([-32768, -1, 0, 1, 32767])
 
@@ -157,6 +180,17 @@ def test_speak_applies_voice_options(monkeypatch: pytest.MonkeyPatch) -> None:
 
     _, options = FakeKokoro.calls[-1]
     assert options == {"voice": "af_sky", "speed": 1.2, "lang": "en-us"}
+
+
+def test_kokoro_audio_is_resampled_for_desktop_playback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server, "Kokoro", FakeKokoro)
+
+    output = server.VoiceWorker().synthesize("Hello")
+
+    assert len(output) == 2 * round(20_000 * 16_000 / 24_000)
+    assert server.pcm_samples(output)[0] == round(0.25 * 32_767)
 
 
 def test_synthesize_normalizes_azure_and_unknown_voice_names(
@@ -266,7 +300,9 @@ def test_speech_segment_cap_drops_audio_and_reports_once(monkeypatch: pytest.Mon
     asyncio.run(check())
 
 
-def test_speak_supersede_cancels_previous_speech(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_speak_supersede_cancels_previous_speech(
+    monkeypatch: pytest.MonkeyPatch, fake_kokoro_assets: None
+) -> None:
     async def check() -> None:
         monkeypatch.setattr(server, "Kokoro", FakeKokoro)
         socket = Socket(block_audio=True)

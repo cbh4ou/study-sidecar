@@ -328,8 +328,10 @@ export function launchChildren(
 				"run",
 				"--project",
 				"workers/voice-local",
+				"--extra",
+				"voice",
 				"python",
-				"workers/voice-local/server.py",
+				"workers/voice-local/launch.py",
 				"--ws",
 			],
 			env: {

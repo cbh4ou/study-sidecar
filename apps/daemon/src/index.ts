@@ -286,13 +286,14 @@ const server = Bun.serve({
 							return;
 						}
 						socket.data.bridge = bridge;
-						socket.send(
-							JSON.stringify({
-								type: "ready",
-								vad: socket.data.engine.kind,
-								tts: socket.data.engine.kind,
-							}),
-						);
+						if (socket.data.engine.kind === "realtime")
+							socket.send(
+								JSON.stringify({
+									type: "ready",
+									vad: "server",
+									tts: "realtime",
+								}),
+							);
 					})
 					.catch(() => socket.close(1011, "voice engine unavailable"));
 				return;

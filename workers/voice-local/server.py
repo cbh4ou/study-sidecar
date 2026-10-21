@@ -15,8 +15,6 @@ import os
 import re
 import secrets
 import sys
-import tempfile
-import wave
 from array import array
 from pathlib import Path
 from typing import Any, Literal
@@ -164,6 +162,22 @@ def pcm_bytes(samples: Any) -> bytes:
     return pcm.tobytes()
 
 
+def resample_samples(samples: Any, source_rate: int) -> list[float]:
+    if source_rate <= 0:
+        raise ValueError("invalid TTS sample rate")
+    if source_rate == SAMPLE_RATE:
+        return list(samples)
+    count = round(len(samples) * SAMPLE_RATE / source_rate)
+    result: list[float] = []
+    for index in range(count):
+        position = index * source_rate / SAMPLE_RATE
+        left = int(position)
+        right = min(left + 1, len(samples) - 1)
+        fraction = position - left
+        result.append(float(samples[left]) * (1 - fraction) + float(samples[right]) * fraction)
+    return result
+
+
 class StreamingVad:
     def __init__(self) -> None:
         self._model: Any = None
@@ -212,7 +226,7 @@ def whisper_settings() -> tuple[str, str]:
         except Exception:
             device = "cpu"
     return device, os.getenv(
-        "WHISPER_COMPUTE_TYPE", "float16" if device == "cuda" else "int8"
+        "WHISPER_COMPUTE_TYPE", "int8_float16" if device == "cuda" else "int8"
     )
 
 
@@ -296,6 +310,14 @@ def normalize_voice(value: object | None) -> str:
     return normalized
 
 
+def kokoro_paths() -> tuple[Path, Path]:
+    model_dir = Path.home() / ".study-sidecar" / "models"
+    return (
+        Path(os.getenv("KOKORO_MODEL_PATH", str(model_dir / "kokoro-v1.0.onnx"))),
+        Path(os.getenv("KOKORO_VOICES_PATH", str(model_dir / "voices-v1.0.bin"))),
+    )
+
+
 class VoiceWorker:
     def __init__(self) -> None:
         self._whisper: Any = None
@@ -303,11 +325,14 @@ class VoiceWorker:
 
     @property
     def tts_available(self) -> bool:
-        return Kokoro is not None
+        model, voices = kokoro_paths()
+        return Kokoro is not None and model.is_file() and voices.is_file()
 
     def transcribe_pcm(self, pcm: bytes) -> str:
         if WhisperModel is None:
             raise RuntimeError("STT unavailable")
+        import numpy as np
+
         if self._whisper is None:
             device, compute_type = whisper_settings()
             self._whisper = WhisperModel(
@@ -315,38 +340,28 @@ class VoiceWorker:
                 device=device,
                 compute_type=compute_type,
             )
-        with tempfile.NamedTemporaryFile(
-            prefix="study-sidecar-", suffix=".wav", delete=False
-        ) as file:
-            path = Path(file.name)
-        try:
-            with wave.open(str(path), "wb") as output:
-                output.setnchannels(1)
-                output.setsampwidth(2)
-                output.setframerate(SAMPLE_RATE)
-                output.writeframes(pcm)
-            segments, _ = self._whisper.transcribe(str(path), beam_size=1)
-            return " ".join(segment.text.strip() for segment in segments).strip()
-        finally:
-            path.unlink(missing_ok=True)
+        samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768
+        segments, _ = self._whisper.transcribe(samples, beam_size=1)
+        return " ".join(segment.text.strip() for segment in segments).strip()
 
     def synthesize(self, text: str, voice: dict[str, Any] | None = None) -> bytes:
         if Kokoro is None:
             raise RuntimeError("TTS unavailable")
         if self._kokoro is None:
+            model, voices = kokoro_paths()
             self._kokoro = Kokoro(
-                os.getenv("KOKORO_MODEL_PATH", "kokoro-v1.0.onnx"),
-                os.getenv("KOKORO_VOICES_PATH", "voices-v1.0.bin"),
+                str(model),
+                str(voices),
             )
         options = voice or {}
         language = str(options.get("language") or "en-us").lower()
-        samples, _ = self._kokoro.create(
+        samples, sample_rate = self._kokoro.create(
             text,
             voice=normalize_voice(options.get("voice")),
             speed=float(options["speed"]) if options.get("speed") is not None else 1.0,
             lang={"en": "en-us"}.get(language, language),
         )
-        return pcm_bytes(samples)
+        return pcm_bytes(resample_samples(samples, sample_rate))
 
 
 class VoiceSession:
