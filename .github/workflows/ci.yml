@@ -19,8 +19,7 @@ jobs:
       - run: bun run typecheck
       - run: bun test
       - run: bun run --cwd apps/desktop build
-      - run: uv sync --project workers/voice-local
-      - run: uv run --project workers/voice-local pytest workers/voice-local/tests -q
+      - run: uv run --project workers/voice-local --group test python -m pytest workers/voice-local/tests -q
 
   desktop:
     runs-on: ubuntu-latest
