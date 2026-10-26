@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ActivityRegistry } from "../activity.ts";
@@ -841,4 +841,28 @@ test("confirmed anchors join packet anchors and source rail without duplicate pi
 	await expect(
 		learn.pinAnchor(lesson.id, { kind: "file", path: "/project/overflow.ts" }),
 	).rejects.toThrow("8 pinned anchors");
+});
+
+test("invalid review lines and malformed lesson records are discarded rather than guessed", async () => {
+	const feature = createLearnFeature(deps());
+	const learn = feature.service;
+	const card = await learn.createCard({
+		propositionId: "n_ack",
+		question: "What proves handling?",
+		source: { kind: "file", path: "/project/consumer.ts" },
+	});
+	await learn.grade(card.id, "good", "button");
+	const valid = await readFile(learn.cards.reviewsPath, "utf8");
+	await writeFile(
+		learn.cards.reviewsPath,
+		`${valid}${JSON.stringify({ cardId: card.id, at: new Date(START).toISOString(), rating: "__proto__", by: "button" })}\n${JSON.stringify({ cardId: card.id, at: "not a date", rating: "good", by: "button" })}\n`,
+	);
+	expect(await learn.cards.reviews()).toHaveLength(1);
+	expect((await learn.cards.states())[0]?.reviews).toBe(1);
+	const lesson = await learn.createLesson({ goal: "safe boundary" });
+	await writeFile(
+		join(learn.lessons.dir, `${lesson.id}.json`),
+		JSON.stringify({ ...lesson, questions: [{ kind: "unknown" }] }),
+	);
+	expect(await learn.lesson(lesson.id)).toBeUndefined();
 });

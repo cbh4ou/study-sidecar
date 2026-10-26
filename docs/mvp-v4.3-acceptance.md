@@ -24,7 +24,7 @@ bun run --cwd apps/desktop build
 | T2 | `bun test apps/daemon/src/adapters/llm.test.ts apps/daemon/src/adapters/decide.test.ts apps/daemon/src/adapters/web.test.ts apps/daemon/src/graph/graph.test.ts` | Cloud lane messages/system strings, Jev inputs, web queries, and extraction prose are redacted at their boundaries. | Existing spies exercise adapter inputs. Native deep harness tool outputs and histories require the additional harness privacy tests. |
 | T3 | `bun test apps/daemon/src/adapters/decide.test.ts apps/daemon/src/lanes/tools.test.ts apps/daemon/src/learn/learn.test.ts apps/daemon/src/graph/graph.test.ts` | A local-only source skips Jev/cloud Decide, private web work is rejected, anchored private lessons skip cloud recap, and private graph extraction is gated. | Module coverage exists. A complete cloud TurnRunner refusal regression was requested during this audit. |
 | T4 | `bun test apps/daemon/src/adapters/decide.test.ts` | Low-confidence Jev escalates to LLM; Jev/LLM failures use rules; threshold is read from settings. | Existing deterministic tests. |
-| T5 | `bun test apps/daemon/src/graph/graph.test.ts` | Invalid extractor replies retry with an actionable error; failed/aborted extractor or auditor changes no ledger; identity links, bounded read-only auditor operations, merge dedupe and simplification work. | Passed independently. |
+| T5 | `bun test apps/daemon/src/graph/graph.test.ts` | Invalid extractor replies retry with an actionable error; failed/aborted extractor or auditor changes no ledger; declared native submit_graph/submit_audit tool schemas, identity links, bounded read-only auditor operations, merge dedupe and simplification work. | Passed independently. |
 | T6 | Same graph command | Node tombstones remove every referencing chain from the derived view; corrupt ledger lines are dropped. | Passed independently. |
 | T7 | `bun test apps/daemon/src/learn/learn.test.ts` | A fixed-clock review log replays through ts-fsrs with fuzz disabled and yields deterministic due dates. | Passed independently. |
 | T8 | Same learning command | Correct/partial/misconception/off-topic map to good/hard/again/again; explain-back evidence and voice reviews persist. | Passed independently. |
@@ -36,7 +36,7 @@ bun run --cwd apps/desktop build
 | T14 | `bun test apps/daemon/src/learn/learn.test.ts` | Plan parsing rejects cycles with line-numbered errors; statuses derive from tagged quiz answers; Measure requires three to six answered probes before planning. | Passed independently. |
 
 The independent focused learning/graph run after the latest provenance regression
-passed **45 tests**. The last independent full-suite snapshot before the remaining
+passed **46 tests**. The last independent full-suite snapshot before the remaining
 parallel changes passed 262 tests and failed one CLI environment equality assertion:
 `BUN_RUNTIME_TRANSPILER_CACHE_PATH=0` was added to the daemon child but its expected
 object had not yet been updated. The full TypeScript gate passed in that snapshot.
