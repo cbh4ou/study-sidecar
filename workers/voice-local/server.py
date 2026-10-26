@@ -9,6 +9,7 @@ import binascii
 import contextlib
 import functools
 import hmac
+import importlib.util
 import json
 import logging
 import os
@@ -296,10 +297,35 @@ def normalize_voice(value: object | None) -> str:
     return normalized
 
 
+def optional_module(name: str) -> bool:
+    """True when a top-level module is importable, without importing it."""
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def available_engines() -> dict[str, list[str]]:
+    stt: list[str] = []
+    tts: list[str] = []
+    if WhisperModel is not None:
+        stt.append("faster-whisper")
+    if optional_module("nemo") or optional_module("parakeet_mlx"):
+        stt.append("parakeet")
+    if Kokoro is not None:
+        tts.append("kokoro")
+    if optional_module("piper"):
+        tts.append("piper")
+    return {"stt": stt, "tts": tts}
+
+
 class VoiceWorker:
     def __init__(self) -> None:
         self._whisper: Any = None
         self._kokoro: Any = None
+
+    def engines(self) -> dict[str, list[str]]:
+        return available_engines()
 
     @property
     def tts_available(self) -> bool:
@@ -370,6 +396,7 @@ class VoiceSession:
                 "type": "ready",
                 "vad": self.vad.kind,
                 "tts": "kokoro" if self.worker.tts_available else "unavailable",
+                "engines": self.worker.engines(),
             }
         )
 
@@ -384,9 +411,13 @@ class VoiceSession:
                 self.speaking = False
                 self.silence_samples = 0
             elif message_type == "listen_stop":
+                # Push-to-talk release: stop capturing and finalize right away
+                # instead of waiting for 600 ms of trailing silence.
                 self.listening = False
-                if self.speaking:
+                if self.speaking or self.segment:
                     await self.finish_speech()
+                else:
+                    await self.send({"type": "transcript", "final": True, "text": ""})
             elif message_type == "audio":
                 pcm = decode_audio(message["pcm_b16"])
                 if len(pcm) > MAX_AUDIO_BYTES:
@@ -438,11 +469,12 @@ class VoiceSession:
         self.segment_capped = False
         self.silence_samples = 0
         await self.send({"type": "vad", "speech": False})
-        try:
-            text = await asyncio.to_thread(self.worker.transcribe_pcm, pcm)
-        except Exception as error:
-            await self.send({"type": "error", "message": str(error)})
-            text = ""
+        text = ""
+        if pcm:
+            try:
+                text = await asyncio.to_thread(self.worker.transcribe_pcm, pcm)
+            except Exception as error:
+                await self.send({"type": "error", "message": str(error)})
         await self.send({"type": "transcript", "final": True, "text": text})
 
     async def speak(

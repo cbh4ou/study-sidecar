@@ -1,3 +1,5 @@
+import { createFakeVoiceBridge, FAKE_ENGINES } from "./fake.ts";
+
 const LOCAL_PORT = 8879;
 const CONNECT_TIMEOUT_MS = 500;
 const PROBE_CACHE_MS = 5_000;
@@ -10,13 +12,15 @@ export type VoiceProfile = {
 export type VoiceEngine =
 	| { kind: "local"; wsUrl: string }
 	| { kind: "realtime" }
+	| { kind: "fake" }
 	| { kind: "none" };
+export type VoiceEngines = { stt: string[]; tts: string[] };
 export type VoiceInput =
 	| { type: "listen_start" | "listen_stop" | "interrupt" }
 	| { type: "audio"; pcm_b16: string }
 	| { type: "speak"; id: string; text: string; voice?: VoiceProfile };
 export type VoiceEvent =
-	| { type: "ready"; vad?: string; tts?: string }
+	| { type: "ready"; vad?: string; tts?: string; engines?: VoiceEngines }
 	| { type: "vad"; speech: boolean }
 	| { type: "transcript"; final: boolean; text: string }
 	| { type: "tts_started"; id: string }
@@ -39,40 +43,69 @@ export type SelectVoiceEngineOptions = {
 	port?: number;
 	url?: string;
 	cacheMs?: number;
+	/** Force the in-process fake engine. Defaults to `SIDECAR_FAKE === "1"`. */
+	fake?: boolean;
 };
+
+const object = (value: unknown): Record<string, unknown> | undefined =>
+	value && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: undefined;
+const string = (value: unknown): string | undefined =>
+	typeof value === "string" ? value : undefined;
 
 export class VoiceBridgeError extends Error {}
 export class VoiceUnavailableError extends VoiceBridgeError {}
 
-const probes = new Map<string, { expires: number; ready: boolean }>();
+type Probe = { ready: boolean; engines?: VoiceEngines };
 
-async function localReady(url: string): Promise<boolean> {
+const probes = new Map<string, Probe & { expires: number }>();
+// Engines last reported by each ready local worker, keyed by its wsUrl.
+const localEngines = new Map<string, VoiceEngines>();
+
+const stringList = (value: unknown): string[] =>
+	Array.isArray(value)
+		? value.filter((item): item is string => typeof item === "string")
+		: [];
+
+export function parseEngines(value: unknown): VoiceEngines | undefined {
+	const record = object(value);
+	if (!record) return undefined;
+	return { stt: stringList(record.stt), tts: stringList(record.tts) };
+}
+
+async function localReady(url: string): Promise<Probe> {
 	try {
 		const socket = new WebSocket(url);
-		return await new Promise<boolean>((resolve) => {
+		return await new Promise<Probe>((resolve) => {
 			let settled = false;
-			const finish = (ready: boolean) => {
+			const finish = (probe: Probe) => {
 				if (settled) return;
 				settled = true;
 				clearTimeout(timeout);
 				socket.close();
-				resolve(ready);
+				resolve(probe);
 			};
-			const timeout = setTimeout(() => finish(false), CONNECT_TIMEOUT_MS);
+			const notReady = { ready: false };
+			const timeout = setTimeout(() => finish(notReady), CONNECT_TIMEOUT_MS);
 			timeout.unref();
-			socket.onerror = () => finish(false);
-			socket.onclose = () => finish(false);
+			socket.onerror = () => finish(notReady);
+			socket.onclose = () => finish(notReady);
 			socket.onmessage = ({ data }) => {
 				try {
-					const message = JSON.parse(String(data)) as { type?: unknown };
-					finish(message.type === "ready");
+					const message = JSON.parse(String(data)) as Record<string, unknown>;
+					finish(
+						message.type === "ready"
+							? { ready: true, engines: parseEngines(message.engines) }
+							: notReady,
+					);
 				} catch {
-					finish(false);
+					finish(notReady);
 				}
 			};
 		});
 	} catch {
-		return false;
+		return { ready: false };
 	}
 }
 
@@ -80,6 +113,7 @@ export async function selectVoiceEngine(
 	voiceToken = process.env.SIDECAR_VOICE_TOKEN,
 	options: SelectVoiceEngineOptions = {},
 ): Promise<VoiceEngine> {
+	if (options.fake ?? process.env.SIDECAR_FAKE === "1") return { kind: "fake" };
 	if (voiceToken) {
 		const url = new URL(
 			options.url ?? `ws://127.0.0.1:${options.port ?? LOCAL_PORT}`,
@@ -88,27 +122,41 @@ export async function selectVoiceEngine(
 		const key = url.toString();
 		const now = Date.now();
 		const cached = probes.get(key);
-		const ready =
+		const probe =
 			cached && cached.expires > now
-				? cached.ready
+				? cached
 				: await localReady(key).then((result) => {
 						probes.set(key, {
+							...result,
 							expires: now + (options.cacheMs ?? PROBE_CACHE_MS),
-							ready: result,
 						});
 						return result;
 					});
-		if (ready) return { kind: "local", wsUrl: key };
+		if (probe.ready) {
+			if (probe.engines) localEngines.set(key, probe.engines);
+			return { kind: "local", wsUrl: key };
+		}
 	}
 	return process.env.OPENAI_API_KEY ? { kind: "realtime" } : { kind: "none" };
 }
 
-const object = (value: unknown): Record<string, unknown> | undefined =>
-	value && typeof value === "object" && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: undefined;
-const string = (value: unknown): string | undefined =>
-	typeof value === "string" ? value : undefined;
+/**
+ * Engines a voice engine offers, for `GET /voice` and the ready frame.
+ * Local engines report what the worker's ready frame listed during the probe.
+ */
+export function voiceEngines(engine: VoiceEngine): VoiceEngines {
+	if (engine.kind === "fake")
+		return { stt: [...FAKE_ENGINES.stt], tts: [...FAKE_ENGINES.tts] };
+	if (engine.kind === "realtime")
+		return { stt: ["openai-realtime"], tts: ["openai-realtime"] };
+	if (engine.kind === "local") {
+		const engines = localEngines.get(engine.wsUrl);
+		return engines
+			? { stt: [...engines.stt], tts: [...engines.tts] }
+			: { stt: [], tts: [] };
+	}
+	return { stt: [], tts: [] };
+}
 
 export function realtimeRequest(input: VoiceInput): object {
 	if (input.type === "audio")
@@ -163,12 +211,21 @@ export function realtimeOutputEvents(
 	return [];
 }
 
-function localOutputEvents(value: unknown): VoiceEvent[] {
+export function localOutputEvents(value: unknown): VoiceEvent[] {
 	const message = object(value);
 	const type = string(message?.type);
 	const id = string(message?.id);
-	if (type === "ready")
-		return [{ type, vad: string(message?.vad), tts: string(message?.tts) }];
+	if (type === "ready") {
+		const engines = parseEngines(message?.engines);
+		return [
+			{
+				type,
+				vad: string(message?.vad),
+				tts: string(message?.tts),
+				...(engines ? { engines } : {}),
+			},
+		];
+	}
 	if (type === "vad" && typeof message?.speech === "boolean")
 		return [{ type, speech: message.speech }];
 	if (type === "transcript" && typeof message?.text === "string")
@@ -267,6 +324,7 @@ export async function createVoiceBridge(
 			close() {},
 		};
 	}
+	if (engine.kind === "fake") return createFakeVoiceBridge(handlers);
 	if (engine.kind === "local") {
 		const socket = await connect(engine.wsUrl, handlers);
 		socket.onmessage = ({ data }) => {

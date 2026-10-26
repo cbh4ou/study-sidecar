@@ -34,6 +34,7 @@ import {
 	selectVoiceEngine,
 	type VoiceBridge,
 	type VoiceEngine,
+	voiceEngines,
 } from "./voice/router.ts";
 
 const args = process.argv.slice(2);
@@ -258,7 +259,7 @@ const server = Bun.serve<SocketData>({
 			return json({ prompt: tutor.latestSteering }, cors);
 		}
 		if (url.pathname === "/voice") {
-			voiceEngine = await selectVoiceEngine(voiceToken);
+			voiceEngine = await selectVoiceEngine(voiceToken, { fake });
 			return json(
 				{
 					kind: voiceEngine.kind,
@@ -266,6 +267,7 @@ const server = Bun.serve<SocketData>({
 						voiceEngine.kind === "none"
 							? null
 							: `ws://127.0.0.1:${server.port}/voice-ws`,
+					engines: voiceEngines(voiceEngine),
 				},
 				cors,
 			);
@@ -365,6 +367,7 @@ const server = Bun.serve<SocketData>({
 								type: "ready",
 								vad: voice.engine.kind,
 								tts: voice.engine.kind,
+								engines: voiceEngines(voice.engine),
 							}),
 						);
 					})

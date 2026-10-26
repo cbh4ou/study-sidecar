@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import base64
 import contextlib
@@ -125,6 +127,8 @@ def test_guarded_import_fallbacks_report_capabilities(monkeypatch: pytest.Monkey
     async def check() -> None:
         monkeypatch.setattr(server, "SileroModel", None)
         monkeypatch.setattr(server, "Kokoro", None)
+        monkeypatch.setattr(server, "WhisperModel", None)
+        monkeypatch.setattr(server, "optional_module", lambda _: False)
         socket = Socket()
         session = server.VoiceSession(server.VoiceWorker(), socket)
 
@@ -133,9 +137,105 @@ def test_guarded_import_fallbacks_report_capabilities(monkeypatch: pytest.Monkey
         await asyncio.sleep(0)
 
         assert socket.messages == [
-            {"type": "ready", "vad": "energy", "tts": "unavailable"},
+            {
+                "type": "ready",
+                "vad": "energy",
+                "tts": "unavailable",
+                "engines": {"stt": [], "tts": []},
+            },
             {"type": "tts_stopped", "id": "voice-1", "reason": "unavailable"},
         ]
+
+    asyncio.run(check())
+
+
+def test_ready_lists_importable_engines(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def check() -> None:
+        monkeypatch.setattr(server, "SileroModel", None)
+        monkeypatch.setattr(server, "WhisperModel", object)
+        monkeypatch.setattr(server, "Kokoro", FakeKokoro)
+        monkeypatch.setattr(server, "optional_module", lambda name: name in {"nemo", "piper"})
+        socket = Socket()
+        session = server.VoiceSession(server.VoiceWorker(), socket)
+
+        await session.ready()
+
+        assert socket.messages == [
+            {
+                "type": "ready",
+                "vad": "energy",
+                "tts": "kokoro",
+                "engines": {"stt": ["faster-whisper", "parakeet"], "tts": ["kokoro", "piper"]},
+            }
+        ]
+
+    asyncio.run(check())
+
+
+def test_optional_module_detection_never_raises() -> None:
+    assert server.optional_module("json") is True
+    assert server.optional_module("definitely_not_a_module_xyz") is False
+    assert server.optional_module("") is False
+
+
+def test_t13_listen_stop_finalizes_without_waiting_for_silence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def check() -> None:
+        monkeypatch.setattr(server, "SileroModel", None)
+        worker = server.VoiceWorker()
+        heard: list[bytes] = []
+
+        def transcribe(pcm_data: bytes) -> str:
+            heard.append(pcm_data)
+            return "what is a channel ack"
+
+        monkeypatch.setattr(worker, "transcribe_pcm", transcribe)
+        socket = Socket()
+        session = server.VoiceSession(worker, socket)
+
+        await session.handle({"type": "listen_start"})
+        speech = pcm([800] * 1_600)
+        await session.handle({"type": "audio", "pcm_b16": server.encode_audio(speech)})
+        # Only 100 ms of trailing silence: far below the 600 ms auto-finalize window.
+        await session.handle({"type": "audio", "pcm_b16": server.encode_audio(pcm([0] * 1_600))})
+        assert message_types(socket) == ["vad"]
+
+        await session.handle({"type": "listen_stop"})
+
+        assert message_types(socket) == ["vad", "vad", "transcript"]
+        assert socket.messages[-1] == {
+            "type": "transcript",
+            "final": True,
+            "text": "what is a channel ack",
+        }
+        assert heard == [speech + pcm([0] * 1_600)]
+        assert session.listening is False
+
+        # Capture has stopped: later audio is ignored and produces nothing.
+        await session.handle({"type": "audio", "pcm_b16": server.encode_audio(speech)})
+        assert message_types(socket) == ["vad", "vad", "transcript"]
+
+    asyncio.run(check())
+
+
+def test_listen_stop_with_empty_buffer_emits_empty_final_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def check() -> None:
+        monkeypatch.setattr(server, "SileroModel", None)
+        worker = server.VoiceWorker()
+        calls: list[bytes] = []
+        monkeypatch.setattr(worker, "transcribe_pcm", lambda data: calls.append(data) or "x")
+        socket = Socket()
+        session = server.VoiceSession(worker, socket)
+
+        await session.handle({"type": "listen_start"})
+        await session.handle({"type": "audio", "pcm_b16": server.encode_audio(pcm([0] * 1_600))})
+        await session.handle({"type": "listen_stop"})
+
+        assert socket.messages == [{"type": "transcript", "final": True, "text": ""}]
+        assert calls == []
 
     asyncio.run(check())
 
