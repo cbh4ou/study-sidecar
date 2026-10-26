@@ -1,7 +1,15 @@
 import type { Ports } from "../feature.ts";
 import { systemClock } from "../ports/clock.ts";
-import { certain } from "../ports/decide.ts";
 import type { SettingsStore } from "../settings.ts";
+import { ComposedDecide } from "./decide-compose.ts";
+import { FakeDecide } from "./decide-fake.ts";
+import { JevDecide } from "./decide-jev.ts";
+import { LlmDecide } from "./decide-llm.ts";
+import { RulesDecide } from "./decide-rules.ts";
+import { FakeLlm } from "./llm-fake.ts";
+import { createPiLlm } from "./llm-pi.ts";
+import { FakeWeb } from "./web-fake.ts";
+import { WebProvider } from "./web-provider.ts";
 
 export type PortOptions = {
 	home: string;
@@ -12,38 +20,37 @@ export type PortOptions = {
 };
 
 /**
- * PLACEHOLDER (P0): replaced by workstream A with real/fake adapter wiring.
- * Keeps the daemon bootable before adapters land.
+ * Wire every port. Fake mode uses deterministic fakes only. Real mode reads
+ * settings at call time, so lane models, Decide adapter, and web keys can
+ * change without a restart; a missing model only errors when a lane is used.
  */
 export async function createPorts(options: PortOptions): Promise<Ports> {
-	void options;
+	if (options.fake)
+		return {
+			clock: systemClock,
+			llm: new FakeLlm(),
+			decide: new FakeDecide(),
+			web: new FakeWeb(),
+		};
+	const llm = await createPiLlm({
+		home: options.home,
+		settings: options.settings,
+		modelSlug: options.modelSlug,
+	});
 	return {
 		clock: systemClock,
-		llm: {
-			isCloud: false,
-			async *stream() {
-				yield* [];
-				throw new Error("llm port not configured");
-			},
-			async complete() {
-				throw new Error("llm port not configured");
-			},
-		},
-		decide: {
-			async decide(_task, _input, options) {
-				const first = options[0];
-				if (first === undefined) throw new Error("no options");
-				return certain(first, options, "rules");
-			},
-		},
-		web: {
-			configured: false,
-			async search() {
-				return [];
-			},
-			async fetch() {
-				throw new Error("web search not configured");
-			},
-		},
+		llm,
+		decide: new ComposedDecide({
+			settings: options.settings,
+			jev: new JevDecide({ settings: options.settings }),
+			llm: new LlmDecide(llm),
+			rules: new RulesDecide(),
+			llmPort: llm,
+			onError: (adapter, task, error) =>
+				console.warn(
+					`[decide] ${adapter} failed for ${task}: ${error instanceof Error ? error.message : String(error)}`,
+				),
+		}),
+		web: new WebProvider({ settings: options.settings }),
 	};
 }

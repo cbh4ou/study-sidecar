@@ -18,6 +18,9 @@ export type ComposedDecideOptions = {
 	onError?: (adapter: "jev" | "llm", task: DecideTask, error: unknown) => void;
 };
 
+/** Tasks whose rule fallback is a placeholder (spec: "LLM adapter"). */
+const LLM_PREFERRED = new Set<DecideTask>(["explain_back", "concept_route"]);
+
 /**
  * Spec Section 10 composition: Jev (key set, input not local_only) ->
  * escalate to LLM when confidence < threshold -> rules on any error.
@@ -66,16 +69,18 @@ export class ComposedDecide implements DecidePort {
 				return rules();
 			}
 		}
+		// "auto" without Jev uses the LLM only where rules are weak, so
+		// high-volume tasks (delta_class per event, intent per turn) stay free.
 		const tryLlm =
 			llmAllowed &&
 			(settings.adapter === "llm" ||
 				low !== undefined ||
-				(settings.adapter === "auto" && !jevAllowed));
+				(settings.adapter === "auto" &&
+					!jevAllowed &&
+					LLM_PREFERRED.has(task)));
 		if (tryLlm) {
 			try {
-				return done(
-					await this.options.llm.decide(task, input, options, opts),
-				);
+				return done(await this.options.llm.decide(task, input, options, opts));
 			} catch (error) {
 				this.options.onError?.("llm", task, error);
 				return rules();
