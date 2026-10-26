@@ -17,6 +17,7 @@ export type PortOptions = {
 	fake: boolean;
 	settings: SettingsStore;
 	modelSlug?: string;
+	getModelSlug?: () => string | undefined;
 };
 
 /**
@@ -36,6 +37,7 @@ export async function createPorts(options: PortOptions): Promise<Ports> {
 		home: options.home,
 		settings: options.settings,
 		modelSlug: options.modelSlug,
+		getModelSlug: options.getModelSlug,
 	});
 	return {
 		clock: systemClock,

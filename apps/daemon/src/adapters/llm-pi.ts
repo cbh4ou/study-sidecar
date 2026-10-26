@@ -37,6 +37,8 @@ export type LlmPiOptions = {
 	settings: { readonly value: StoredSettings };
 	/** The daemon's `--model` / `SIDECAR_MODEL` slug; used when a lane has none. */
 	modelSlug?: string;
+	/** Current default model; reflects desktop selection changes without restarting. */
+	getModelSlug?: () => string | undefined;
 	registry?: (home: string) => Promise<Map<string, PiModel>>;
 	credential?: (home: string, provider: string) => Promise<string>;
 	streamImpl?: PiStreamImpl;
@@ -193,14 +195,20 @@ export class PiLlm implements LlmPort {
 				value,
 				lane,
 				lane === "fast"
-					? (this.#fastDefault ?? this.options.modelSlug)
-					: this.options.modelSlug,
+					? (this.#fastDefault ?? this.#defaultSlug())
+					: this.#defaultSlug(),
 			);
 			if (!slug) continue;
 			const entry = this.#registry.get(slug);
 			if (!entry || !isLoopbackUrl(entry.baseUrl)) return true;
 		}
 		return false;
+	}
+
+	#defaultSlug(): string | undefined {
+		return this.options.getModelSlug
+			? this.options.getModelSlug()
+			: this.options.modelSlug;
 	}
 
 	async #refresh(): Promise<void> {
@@ -244,8 +252,8 @@ export class PiLlm implements LlmPort {
 			this.options.settings.value,
 			lane,
 			lane === "fast"
-				? (this.#fastDefault ?? this.options.modelSlug)
-				: this.options.modelSlug,
+				? (this.#fastDefault ?? this.#defaultSlug())
+				: this.#defaultSlug(),
 		);
 		if (!slug)
 			throw new TutorModelError(

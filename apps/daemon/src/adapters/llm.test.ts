@@ -105,6 +105,33 @@ describe("llm-pi pure parts", () => {
 		expect(llm.isCloud).toBe(true);
 	});
 
+	test("default model selection updates at use time without recreating ports", async () => {
+		let current: string | undefined = "cloud/big";
+		const used: string[] = [];
+		const llm = await new PiLlm({
+			home: "/fixture",
+			settings: settings(),
+			modelSlug: "cloud/big",
+			getModelSlug: () => current,
+			registry: async () => registry,
+			credential: async () => "test",
+			streamImpl: async function* (model) {
+				used.push(model.id);
+				yield { type: "text_delta", delta: "reply" } as AssistantMessageEvent;
+			},
+		}).init();
+		expect(llm.isCloud).toBe(true);
+		await llm.complete({ lane: "deep", system: "test", messages: [] });
+		current = "local/small";
+		expect(llm.isCloud).toBe(false);
+		await llm.complete({ lane: "deep", system: "test", messages: [] });
+		expect(used).toEqual(["big", "small"]);
+		current = undefined;
+		await expect(
+			llm.complete({ lane: "deep", system: "test", messages: [] }),
+		).rejects.toThrow("No model configured");
+	});
+
 	test("fast lane defaults to cheapest authenticated model", async () => {
 		const models = new Map<string, PiModel>([
 			[
