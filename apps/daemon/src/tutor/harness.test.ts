@@ -252,16 +252,14 @@ describe("tutor durable harness", () => {
 		expect(restored?.scratchpad_diagram.diagram).toContain("Private");
 		await third.tutor.close();
 	});
-	test("cloud gate rejects before a model request", async () => {
+	test("cloud gate rejects before opening a model conversation", async () => {
 		const home = await mkdtemp("/tmp/sidecar-cloudgate-");
 		temporary.push(home);
-		const { tutor, faux } = await harness(home, { allowCloud: () => false });
-		faux.setResponses([fauxAssistantMessage("must never be used")]);
-		await expect(tutor.converse("private contents")).rejects.toThrow(
+		await expect(harness(home, { allowCloud: () => false })).rejects.toThrow(
 			"local only",
 		);
-		await tutor.close();
 	});
+
 	test("native abort cancels the active provider request", async () => {
 		const home = await mkdtemp("/tmp/sidecar-abort-");
 		temporary.push(home);

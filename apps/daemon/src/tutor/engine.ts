@@ -441,7 +441,12 @@ export class TutorEngine {
 		const revision = this.#interruptRevision;
 		const scope = this.options.sourceScope?.();
 		await this.#cancelling;
-		if (this.options.allowCloud?.() === false)
+		if (
+			this.options.allowCloud?.() === false ||
+			((await this.options.sourcePaths?.()) ?? []).some(
+				(path) => this.options.allowCloud?.(path) === false,
+			)
+		)
 			throw new Error("This source is local only.");
 		try {
 			const answer = await (await this.#tutorHandle()).converse(prompt);

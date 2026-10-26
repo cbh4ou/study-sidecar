@@ -182,6 +182,13 @@ async function buildProvider(
 export async function openTutorHarness(
 	options: TutorHarnessOptions,
 ): Promise<TutorHarness> {
+	if (
+		options.allowCloud?.() === false ||
+		((await options.sourcePaths?.()) ?? []).some(
+			(path) => options.allowCloud?.(path) === false,
+		)
+	)
+		throw new Error("Source is local only");
 	const root = sidecarHome(options.home);
 	const workspace = join(root, "workspace");
 	const scratch = join(workspace, "scratch");
@@ -701,7 +708,12 @@ export async function openTutorHarness(
 	return {
 		abort: () => conversation.abort(context),
 		async converse(prompt: string): Promise<string> {
-			if (options.allowCloud?.() === false)
+			if (
+				options.allowCloud?.() === false ||
+				((await options.sourcePaths?.()) ?? []).some(
+					(path) => options.allowCloud?.(path) === false,
+				)
+			)
 				throw new Error("Source is local only");
 			const settled = await (
 				await conversation.submit(

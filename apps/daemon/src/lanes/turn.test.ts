@@ -377,7 +377,7 @@ describe("lanes feature turn orchestration", () => {
 		]);
 		const fast = h.messages.filter((m) => m.type === "fast_answer");
 		expect(fast).toEqual([
-			{ type: "fast_answer", turnId: "t1", text: "Noted." },
+			{ type: "fast_answer", turnId: "t1", text: "Noted.", speak: false },
 		]);
 		expect(llm.requests).toHaveLength(0);
 	});
