@@ -1,0 +1,25 @@
+{
+	"intent": [
+		{ "match": "across all sessions", "choice": "question_all_sessions" },
+		{ "match": "send that back", "choice": "bridge_back" },
+		{ "match": "send it back", "choice": "bridge_back" },
+		{ "match": "never mind", "choice": "cancel" },
+		{ "match": "thinking out loud", "choice": "think_aloud" },
+		{ "match": "channel ack", "choice": "question" }
+	],
+	"lane": [
+		{ "match": "look up", "choice": "needs_web" },
+		{ "match": "latest", "choice": "needs_web" },
+		{ "match": "quick", "choice": "fast_only" },
+		{ "match": "channel ack", "choice": "fast_and_deep" }
+	],
+	"delta_class": [
+		{ "match": "ack timeout", "choice": "PROACTIVE_COACH" },
+		{ "match": "broker.py", "choice": "AMBIENT_PILL" }
+	],
+	"nudge_gate": [{ "match": "ack timeout", "choice": "nudge" }],
+	"explain_back": [
+		{ "match": "redeliver", "choice": "correct" },
+		{ "match": "ack", "choice": "partial" }
+	]
+}
