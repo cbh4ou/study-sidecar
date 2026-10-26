@@ -94,6 +94,10 @@ describe("T5 extraction", () => {
 			[{ id: "m1", text: "An ack confirms delivery. Retries depend on acks." }],
 		);
 		expect(llm.calls).toHaveLength(3);
+		expect(llm.calls[0]?.submit).toMatchObject({
+			name: "submit_graph",
+			parameters: { type: "object", required: ["propositions", "chains"] },
+		});
 		const second = llm.calls[1]?.messages.at(-1)?.content ?? "";
 		expect(second).toContain("Submit rejected: invalid JSON");
 		const third = llm.calls[2]?.messages.at(-1)?.content ?? "";
@@ -711,6 +715,10 @@ test("auditor read tools resolve identity and preserve source provenance", async
 			],
 		}),
 		(req) => {
+			expect(req.submit).toMatchObject({
+				name: "submit_audit",
+				parameters: { type: "object" },
+			});
 			expect(req.messages.at(-1)?.content).toContain("n_ACK");
 			return JSON.stringify({ links: [{ newId: "p1", existingId: "n_ACK" }] });
 		},

@@ -55,17 +55,39 @@ const AuditCallsSchema = z.object({
 		.max(5),
 });
 
+export const GRAPH_SUBMIT_TOOL = {
+	name: "submit_graph",
+	description:
+		"Submit objective propositions and implication chains extracted from the tutor prose. Invalid arguments are returned for correction.",
+	parameters: z.toJSONSchema(ExtractorSubmitSchema),
+};
+const AuditToolSchema = z
+	.object({
+		links: AuditorSubmitSchema.shape.links.optional(),
+		calls: AuditCallsSchema.shape.calls.optional(),
+	})
+	.refine(
+		(value) => (value.links !== undefined) !== (value.calls !== undefined),
+		"Submit exactly one of links or calls",
+	);
+export const AUDIT_SUBMIT_TOOL = {
+	name: "submit_audit",
+	description:
+		"Submit identity links, or request read-only find/list_propositions operations before deciding identity links. Choose links or calls.",
+	parameters: z.toJSONSchema(AuditToolSchema),
+};
+
 export const EXTRACTOR_SYSTEM = `You extract a knowledge graph from tutor prose.
 A proposition is one objective, world-facing claim (never about the learner, the lesson, or what was said). Give it a short name (<= 80 chars) and a one-sentence statement.
 A chain is a set of premises that JOINTLY entail a conclusion. Two independent arguments for the same conclusion are two chains. Never put the conclusion among its premises.
 New propositions use short local ids you choose (p1, p2, ...). Chain endpoints may be your local ids or existing ids (n_...) from GRAPH SO FAR. Do not restate a proposition that already exists; reference its id.
-Reply with ONE JSON object and nothing else:
+Call submit_graph with these arguments and emit no prose:
 {"propositions":[{"id":"p1","name":"...","statement":"...","aliases":["..."]}],"chains":[{"premises":["p1"],"conclusion":"p2"}]}`;
 
 export const AUDITOR_SYSTEM = `You audit new propositions against an existing knowledge graph.
 For each new proposition, decide whether it states the SAME claim as one of its listed candidates (same meaning, possibly different wording). Prefer linking when they are equivalent; never link a claim to a merely related, broader, or narrower one.
 You may request read-only tools with {"calls":[{"tool":"find","text":"claim"},{"tool":"list_propositions","sourceId":"source id"}]}. Tool results contain existing propositions only.
-When ready reply with ONE JSON object and nothing else:
+Call submit_audit with read-only calls when needed. When ready, call submit_audit with identity links:
 {"links":[{"newId":"p1","existingId":"n_..."}]}`;
 
 function compact(node: Proposition): string {
@@ -164,6 +186,7 @@ async function llmExtract(
 		const reply = await deps.llm.complete({
 			lane: "deep",
 			system: EXTRACTOR_SYSTEM,
+			submit: GRAPH_SUBMIT_TOOL,
 			messages,
 			json: true,
 			signal: deps.signal,
@@ -176,7 +199,7 @@ async function llmExtract(
 			{
 				role: "user",
 				content: clean(
-					`Submit rejected: ${checked.error}. Fix it and reply with the corrected JSON object only.`,
+					`Submit rejected: ${checked.error}. Call submit_graph again with corrected arguments.`,
 				),
 			},
 		);
@@ -220,6 +243,7 @@ async function llmAudit(
 		const reply = await deps.llm.complete({
 			lane: "deep",
 			system: AUDITOR_SYSTEM,
+			submit: AUDIT_SUBMIT_TOOL,
 			messages,
 			json: true,
 			signal: deps.signal,
@@ -231,7 +255,21 @@ async function llmAudit(
 			lastError = `invalid JSON: ${(error as Error).message}`;
 			messages.push(
 				{ role: "assistant", content: clean(reply) },
-				{ role: "user", content: `Submit rejected: ${lastError}.` },
+				{ role: "user", content: clean(`Submit rejected: ${lastError}.`) },
+			);
+			continue;
+		}
+		const envelope = AuditToolSchema.safeParse(raw);
+		if (!envelope.success) {
+			lastError = formatIssues(envelope.error);
+			messages.push(
+				{ role: "assistant", content: clean(reply) },
+				{
+					role: "user",
+					content: clean(
+						`Submit rejected: ${lastError}. Call submit_audit with corrected arguments.`,
+					),
+				},
 			);
 			continue;
 		}
@@ -260,7 +298,7 @@ async function llmAudit(
 			lastError = formatIssues(parsed.error);
 			messages.push(
 				{ role: "assistant", content: clean(reply) },
-				{ role: "user", content: `Submit rejected: ${lastError}.` },
+				{ role: "user", content: clean(`Submit rejected: ${lastError}.`) },
 			);
 			continue;
 		}
