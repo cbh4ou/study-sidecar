@@ -16,6 +16,17 @@ export type Insight = {
 export type DesktopError = { scope: string; message: string };
 
 export type DesktopState = {
+	dueCount?: number;
+	jobs?: import("./lib/protocol").ActivityJob[];
+	turnId?: string;
+	lessonId?: string;
+	pillStatus?: "idle" | "thinking" | "speaking";
+	transcript?: string;
+	fastAnswer?: string;
+	deepReady?: boolean;
+	card?: import("./lib/protocol").Card;
+	anchor?: { source: import("./lib/protocol").SourceRef; preview: string };
+	boundSession?: { path: string; follow: boolean };
 	events: SessionEvent[];
 	insights: Insight[];
 	prompts: string[];
@@ -54,6 +65,56 @@ export function reduceDaemonMessage(
 	message: DaemonMessage,
 ): DesktopState {
 	switch (message.type) {
+		case "turn_started":
+			return {
+				...state,
+				turnId: message.turnId,
+				lessonId: message.lessonId ?? state.lessonId,
+				pillStatus: "thinking",
+				fastAnswer: "",
+				deepReady: false,
+			};
+		case "transcript":
+			return { ...state, transcript: message.text };
+		case "fast_answer":
+			return {
+				...state,
+				fastAnswer: `${state.fastAnswer ?? ""}${message.text} `,
+				pillStatus: "speaking",
+			};
+		case "deep_update":
+			return {
+				...state,
+				deepReady: true,
+				documents: {
+					...state.documents,
+					...message.documents,
+				} as TutorDocuments,
+			};
+		case "turn_settled":
+			return {
+				...state,
+				pillStatus: state.fastAnswer ? "speaking" : "idle",
+				pendingQuestions: [],
+			};
+		case "cards_due":
+			return { ...state, dueCount: message.count };
+		case "card_prompt":
+			return { ...state, card: message.card };
+		case "anchor_suggest":
+			return {
+				...state,
+				anchor: { source: message.anchor, preview: message.preview },
+			};
+		case "bound_session":
+			return {
+				...state,
+				boundSession: { path: message.sessionPath, follow: message.follow },
+			};
+		case "question":
+			return { ...state, lessonId: message.lessonId ?? state.lessonId };
+		case "activity":
+			return { ...state, jobs: message.jobs };
 		case "session_init": {
 			const nextSession = {
 				id: message.session_id,

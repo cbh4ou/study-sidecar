@@ -8,6 +8,16 @@ import "./styles.css";
 
 if ("__TAURI__" in window) document.documentElement.classList.add("tauri");
 
+if (
+	new URLSearchParams(location.search).get("window") === "pill" &&
+	location.pathname !== "/pill"
+)
+	history.replaceState(null, "", `/pill${location.search}`);
+if (
+	new URLSearchParams(location.search).get("window") === "main" &&
+	location.pathname.endsWith("index.html")
+)
+	history.replaceState(null, "", `/${location.search}`);
 const queryClient = new QueryClient();
 
 declare module "@tanstack/react-router" {

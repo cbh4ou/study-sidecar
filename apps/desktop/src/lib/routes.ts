@@ -1,1 +1,9 @@
-export const desktopRoutes = ["/", "/settings"] as const;
+export const desktopRoutes = [
+	"/",
+	"/classroom",
+	"/classroom/$lessonId",
+	"/sessions",
+	"/review",
+	"/settings",
+	"/pill",
+] as const;

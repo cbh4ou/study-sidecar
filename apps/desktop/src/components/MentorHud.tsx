@@ -122,15 +122,12 @@ function MentorIsland({
 	);
 }
 
-// Module scope: remounts (Settings -> Mentor) must not replay spoken audio.
-const spokenMessages = new WeakSet<object>();
-
-export function MentorHud() {
+export function MentorHud({ embedded = false }: { embedded?: boolean } = {}) {
 	const { state, messages, connection, send, save, saveDraft } =
 		useHudMessages();
 	const { data: daemonState } = useDaemonState();
 	const steering = useLatestSteering();
-	const { voice, toggleListening, toggleMute, speak } = useVoice();
+	const { voice, toggleListening, toggleMute } = useVoice();
 	const [hud, dispatch] = useReducer(hudReducer, initialHudState);
 	const variant =
 		hud.mode === "COMPACT"
@@ -138,7 +135,6 @@ export function MentorHud() {
 			: hud.mode === "AMBIENT_PILL"
 				? "ambient"
 				: "expanded";
-	const latestMessage = messages.at(-1);
 	const documents = state.documents;
 	const latestEvent = state.events.at(-1);
 	const latestAnswer = state.answers.at(-1);
@@ -232,32 +228,9 @@ export function MentorHud() {
 		if (save.isSuccess) setSavedPath(save.data?.path ?? "Saved");
 	}, [save.isSuccess, save.data]);
 	useEffect(() => {
-		if ("__TAURI__" in window)
+		if (!embedded && "__TAURI__" in window)
 			void invoke("set_hud_variant", { variant }).catch(() => undefined);
-	}, [variant]);
-
-	// biome-ignore lint/correctness/useExhaustiveDependencies: speak is unstable and adding it would replay tutor audio on every provider render; latestMessage is the sole trigger
-	useEffect(() => {
-		if (!latestMessage || spokenMessages.has(latestMessage)) return;
-		spokenMessages.add(latestMessage);
-		if (latestMessage.type === "ambient_insight" && latestMessage.insight) {
-			dispatch({ type: "ambient", insight: latestMessage.insight });
-			speak(latestMessage.insight);
-		}
-		if (latestMessage.type === "guardrail" && latestMessage.findings?.length) {
-			const insight = latestMessage.findings.join(" ");
-			dispatch({ type: "guardrail", insight });
-			speak(insight);
-		}
-		if (latestMessage.type === "dead_air_insight") {
-			dispatch({ type: "dead_air" });
-			if (latestMessage.insight) speak(latestMessage.insight);
-		}
-		if (latestMessage.type === "tutor_answer" && latestMessage.answer) {
-			dispatch({ type: "tutor_answer" });
-			speak(latestMessage.answer, latestMessage.voice);
-		}
-	}, [latestMessage]);
+	}, [variant, embedded]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: hud.insight intentionally restarts the pill timer when a fresh insight lands mid-pill
 	useEffect(() => {
@@ -267,7 +240,7 @@ export function MentorHud() {
 	}, [hud.mode, hud.insight]);
 
 	useEffect(() => {
-		if (!("__TAURI__" in window)) return;
+		if (embedded || !("__TAURI__" in window)) return;
 		let unlisten: (() => void) | undefined;
 		void listen("hud://expand", () => dispatch({ type: "expand" })).then(
 			(stop) => {
@@ -275,7 +248,7 @@ export function MentorHud() {
 			},
 		);
 		return () => unlisten?.();
-	}, []);
+	}, [embedded]);
 
 	const submitQuestion = (): void => {
 		const text = draft.trim();

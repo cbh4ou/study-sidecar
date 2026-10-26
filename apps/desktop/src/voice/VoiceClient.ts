@@ -14,10 +14,16 @@ export type VoiceState = {
 	vad: boolean;
 	playback: boolean;
 	transcript: string;
+	engines?: { stt: string[]; tts: string[] };
 };
 
 type WorkerMessage =
-	| { type: "ready"; vad: string; tts: string }
+	| {
+			type: "ready";
+			vad: string;
+			tts: string;
+			engines?: { stt: string[]; tts: string[] };
+	  }
 	| { type: "vad"; speech: boolean }
 	| { type: "transcript"; final: boolean; text: string }
 	| { type: "tts_started"; id: string }
@@ -30,6 +36,7 @@ type VoicePlayback = Pick<PcmPlayback, "active" | "enqueue" | "stop">;
 export type VoiceClientOptions = {
 	onState: (state: VoiceState) => void;
 	onTranscript: (text: string) => void;
+	onFirstAudio?: () => void;
 	daemonUrl?: string;
 	fetch?: (input: string, init?: RequestInit) => Promise<Response>;
 	getToken?: () => Promise<string>;
@@ -38,10 +45,14 @@ export type VoiceClientOptions = {
 	createPlayback?: (onActiveChange: (active: boolean) => void) => VoicePlayback;
 };
 const offlineMessage =
-	"Voice worker offline — run `bun run sidecar up --with-voice`";
+	"Voice worker offline, run bun run sidecar up --with-voice";
 
 export class VoiceClient {
 	#socket?: WebSocket;
+	#epoch = 0;
+	#speech: Array<{ text: string; voice?: VoiceProfile }> = [];
+	#speaking = false;
+	#firstAudio = false;
 	#capture: VoiceCapture;
 	#playback: VoicePlayback;
 	#wantListening = false;
@@ -69,6 +80,7 @@ export class VoiceClient {
 	}
 
 	async connect(): Promise<void> {
+		const epoch = ++this.#epoch;
 		this.#socket?.close();
 		this.#set({ status: "connecting", detail: "Connecting to voice worker…" });
 		try {
@@ -78,6 +90,7 @@ export class VoiceClient {
 				{ headers: token ? { Authorization: `Bearer ${token}` } : {} },
 			);
 			const voice = (await response.json()) as { ws_url?: string | null };
+			if (epoch !== this.#epoch) return;
 			if (!response.ok || !voice.ws_url)
 				return this.#set({ status: "offline", detail: offlineMessage });
 			// The daemon is the only endpoint the desktop bearer may reach; a
@@ -94,8 +107,14 @@ export class VoiceClient {
 					status: "connecting",
 					detail: "Connecting to voice worker…",
 				});
-			socket.onmessage = ({ data }) =>
-				this.#onMessage(JSON.parse(String(data)) as WorkerMessage);
+			socket.onmessage = ({ data }) => {
+				if (this.#socket !== socket) return;
+				try {
+					this.#onMessage(JSON.parse(String(data)) as WorkerMessage);
+				} catch {
+					/* Ignore malformed worker frames. */
+				}
+			};
 			socket.onerror = () =>
 				this.#set({ status: "offline", detail: offlineMessage });
 			socket.onclose = () => {
@@ -120,9 +139,14 @@ export class VoiceClient {
 			return;
 		}
 		try {
-			await this.#capture.start((pcm_b16) => {
-				if (!this.#state.muted) this.#send({ type: "audio", pcm_b16 });
-			});
+			if (!this.#state.engines?.stt.includes("fake"))
+				await this.#capture.start((pcm_b16) => {
+					if (!this.#state.muted) this.#send({ type: "audio", pcm_b16 });
+				});
+			if (!this.#wantListening) {
+				await this.#capture.stop();
+				return;
+			}
 			this.#send({ type: "listen_start" });
 			this.#set({ listening: true });
 		} catch {
@@ -139,18 +163,33 @@ export class VoiceClient {
 		this.#set({ muted });
 	}
 
+	configure(engines: { stt?: string; tts?: string }): void {
+		this.#send({ type: "configure", ...engines });
+	}
 	speak(text: string, voice?: VoiceProfile): void {
-		if (text.trim() && !this.#state.muted)
-			this.#send({ type: "speak", id: crypto.randomUUID(), text, voice });
+		if (text.trim() && !this.#state.muted) {
+			this.#speech.push({ text, voice });
+			this.#nextSpeech();
+		}
+	}
+	#nextSpeech(): void {
+		if (this.#speaking) return;
+		const next = this.#speech.shift();
+		if (!next) return;
+		this.#speaking = true;
+		this.#send({ type: "speak", id: crypto.randomUUID(), ...next });
 	}
 
 	interrupt(): void {
 		this.#dropAudio = true;
+		this.#speech = [];
+		this.#speaking = false;
 		this.#send({ type: "interrupt" });
 		this.#playback.stop();
 	}
 
 	async close(): Promise<void> {
+		this.#epoch++;
 		this.#wantListening = false;
 		this.interrupt();
 		this.#socket?.close();
@@ -162,6 +201,7 @@ export class VoiceClient {
 		if (message.type === "ready") {
 			this.#set({
 				status: "ready",
+				engines: message.engines,
 				detail: `Voice ready (${message.vad} VAD, ${message.tts} TTS)`,
 			});
 			if (this.#wantListening) void this.setListening(true);
@@ -180,10 +220,22 @@ export class VoiceClient {
 		}
 		if (message.type === "tts_started") {
 			this.#dropAudio = false;
+			this.#firstAudio = false;
 			return;
 		}
 		if (message.type === "tts_audio") {
-			if (!this.#dropAudio) void this.#playback.enqueue(message.pcm_b16);
+			if (!this.#dropAudio) {
+				if (!this.#firstAudio) {
+					this.#firstAudio = true;
+					this.options.onFirstAudio?.();
+				}
+				void this.#playback.enqueue(message.pcm_b16);
+			}
+			return;
+		}
+		if (message.type === "tts_stopped") {
+			this.#speaking = false;
+			this.#nextSpeech();
 			return;
 		}
 		if (message.type === "error") this.#set({ detail: message.message });

@@ -1,0 +1,1 @@
+{"identifier":"default","description":"Desktop windows may use the local application bridge","windows":["pill","main"],"permissions":["core:default","clipboard-manager:allow-write-text"]}

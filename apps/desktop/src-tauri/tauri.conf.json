@@ -12,18 +12,36 @@
   "app": {
     "windows": [
       {
-        "label": "main",
-        "title": "Study Partner",
+        "label": "pill",
+        "title": "Study Sidecar pill",
+        "url": "index.html?window=pill",
         "width": 420,
-        "height": 700,
+        "height": 72,
+        "decorations": false,
         "alwaysOnTop": true,
+        "skipTaskbar": true,
         "transparent": true,
+        "resizable": false
+      },
+      {
+        "label": "main",
+        "title": "Study Sidecar",
+        "url": "index.html?window=main",
+        "width": 1200,
+        "height": 850,
+        "minWidth": 900,
+        "minHeight": 600,
+        "maximized": true,
+        "visible": false,
         "resizable": true
       }
     ],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*"
-    }
+    },
+    "withGlobalTauri": true
   },
-  "bundle": { "active": true }
+  "bundle": {
+    "active": true
+  }
 }

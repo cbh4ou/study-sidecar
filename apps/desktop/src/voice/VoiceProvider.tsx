@@ -1,90 +1,198 @@
 import { listen } from "@tauri-apps/api/event";
 import type { ReactNode } from "react";
-import { createContext, useContext, useEffect, useRef, useState } from "react";
-import { useHudMessages } from "../lib/ws";
-import type { VoiceState } from "./VoiceClient";
-import { VoiceClient } from "./VoiceClient";
+import {
+	createContext,
+	useCallback,
+	useContext,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
+import { useSettings } from "../lib/api";
+import { onDaemonMessage, useHudMessages } from "../lib/ws";
+import { bindPushToTalk } from "./PushToTalk";
+import { VoiceClient, type VoiceProfile, type VoiceState } from "./VoiceClient";
 
-const initialVoice: VoiceState = {
+type VoiceControls = {
+	voice: VoiceState;
+	toggleListening: () => void;
+	toggleMute: () => void;
+	speak: (text: string, voice?: VoiceProfile) => void;
+	startPtt: () => void;
+	stopPtt: () => void;
+	interrupt: () => void;
+	setTranscriptTarget: (target: ((text: string) => void) | undefined) => void;
+	configure: (engines: { stt?: string; tts?: string }) => void;
+};
+const VoiceContext = createContext<VoiceControls | undefined>(undefined);
+const initial: VoiceState = {
 	status: "offline",
-	detail: "Voice worker offline — run `bun run sidecar up --with-voice`",
+	detail: "Voice worker offline, run bun run sidecar up --with-voice",
 	listening: false,
 	muted: false,
 	vad: false,
 	playback: false,
 	transcript: "",
 };
-type VoiceProfile = {
-	language?: string;
-	speed?: number;
-	voice?: string;
-};
-type VoiceControls = {
-	voice: VoiceState;
-	toggleListening: () => void;
-	toggleMute: () => void;
-	speak: (text: string, voice?: VoiceProfile) => void;
-};
-const VoiceContext = createContext<VoiceControls | undefined>(undefined);
-
 export function VoiceProvider({ children }: { children: ReactNode }) {
 	const { send } = useHudMessages();
-	const [voice, setVoice] = useState(initialVoice);
+	const { data: settings } = useSettings();
+	const [voice, setVoice] = useState(initial);
 	const client = useRef<VoiceClient | undefined>(undefined);
+	const held = useRef(false);
+	const stoppedAt = useRef(0);
+	const target = useRef<((text: string) => void) | undefined>(undefined);
+	const setTranscriptTarget = useCallback(
+		(next: ((text: string) => void) | undefined) => {
+			target.current = next;
+		},
+		[],
+	);
+	const interrupt = useCallback(() => {
+		client.current?.interrupt();
+		send({ type: "interrupt" });
+	}, [send]);
+	const startPtt = useCallback(() => {
+		if (held.current) return;
+		held.current = true;
+		client.current?.interrupt();
+		send({ type: "ptt_start" });
+		void client.current?.setListening(true);
+	}, [send]);
+	const stopPtt = useCallback(() => {
+		if (!held.current) return;
+		held.current = false;
+		stoppedAt.current = performance.now();
+		send({ type: "ptt_stop" });
+		void client.current?.setListening(false);
+	}, [send]);
 	useEffect(() => {
+		let turnId = "",
+			startedAt = 0,
+			measured = false;
 		const next = new VoiceClient({
 			onState: setVoice,
-			onTranscript: (text) => send({ type: "question", text }),
+			onFirstAudio: () => {
+				if (turnId && !measured) {
+					measured = true;
+					send({
+						type: "turn_telemetry",
+						turnId,
+						tts_first_audio_ms: Math.max(0, performance.now() - startedAt),
+					});
+				}
+			},
+			onTranscript: (text) => {
+				if (target.current) target.current(text);
+				else
+					send({
+						type: "question",
+						text,
+						source: "ptt",
+						sttMs: Math.max(0, performance.now() - stoppedAt.current),
+					});
+			},
 		});
 		client.current = next;
 		void next.connect();
-		let unlisten: (() => void) | undefined;
-		let unlistenPtt: (() => void) | undefined;
-		if ("__TAURI__" in window) {
-			void listen("voice://mute-toggle", () => {
-				const muted = !next.state.muted;
-				if (muted) void next.setListening(false);
-				next.setMuted(muted);
-			}).then((stop) => {
-				unlisten = stop;
-			});
-			void listen("voice://ptt-toggle", () => {
-				void next.setListening(!next.state.listening);
-			}).then((stop) => {
-				unlistenPtt = stop;
-			});
-		}
+		const unsub = onDaemonMessage((message) => {
+			if (message.type === "turn_started") {
+				turnId = message.turnId;
+				startedAt = performance.now();
+				measured = false;
+				next.interrupt();
+			}
+			if (
+				message.type === "fast_answer" &&
+				message.text !== "Noted." &&
+				!(
+					"__TAURI_INTERNALS__" in window &&
+					new URLSearchParams(location.search).get("window") === "main"
+				)
+			)
+				next.speak(message.text);
+			if (message.type === "steering_prompt" && message.prompt) {
+				void import("@tauri-apps/api/core")
+					.then(({ invoke }) => invoke("copy_text", { text: message.prompt }))
+					.catch(() =>
+						navigator.clipboard
+							?.writeText(message.prompt ?? "")
+							.catch(() => undefined),
+					);
+			}
+		});
 		return () => {
-			unlisten?.();
-			unlistenPtt?.();
+			unsub();
 			void next.close();
 			if (client.current === next) client.current = undefined;
 		};
 	}, [send]);
-	function toggleListening(): void {
+	useEffect(() => {
+		if ("__TAURI_INTERNALS__" in window) {
+			let gone = false;
+			const stops: Array<() => void> = [];
+			for (const [event, callback] of [
+				["voice://ptt-start", startPtt],
+				["voice://ptt-stop", stopPtt],
+				["voice://interrupt", interrupt],
+			] as const)
+				void listen(event, callback).then((stop) => {
+					if (gone) stop();
+					else stops.push(stop);
+				});
+			return () => {
+				gone = true;
+				for (const stop of stops) stop();
+			};
+		}
+		return bindPushToTalk(
+			window,
+			startPtt,
+			stopPtt,
+			interrupt,
+			settings?.hotkeys.ptt ?? "Alt+Space",
+		);
+	}, [startPtt, stopPtt, interrupt, settings?.hotkeys.ptt]);
+	const toggleListening = () => {
 		const next = client.current;
 		if (next) void next.setListening(!next.state.listening);
-	}
-	function toggleMute(): void {
+	};
+	const toggleMute = () => {
 		const next = client.current;
 		if (!next) return;
 		const muted = !next.state.muted;
 		if (muted) void next.setListening(false);
 		next.setMuted(muted);
-	}
-	function speak(text: string, voice?: VoiceProfile): void {
-		client.current?.speak(text, voice);
-	}
+	};
+	const speak = useCallback(
+		(text: string, profile?: VoiceProfile) =>
+			client.current?.speak(text, profile),
+		[],
+	);
+	const configure = useCallback(
+		(engines: { stt?: string; tts?: string }) =>
+			client.current?.configure(engines),
+		[],
+	);
 	return (
 		<VoiceContext.Provider
-			value={{ voice, toggleListening, toggleMute, speak }}
+			value={{
+				voice,
+				toggleListening,
+				toggleMute,
+				speak,
+				startPtt,
+				stopPtt,
+				interrupt,
+				setTranscriptTarget,
+				configure,
+			}}
 		>
 			{children}
 		</VoiceContext.Provider>
 	);
 }
-
-export function useVoice(): VoiceControls {
+export function useVoice() {
 	const value = useContext(VoiceContext);
 	if (!value) throw new Error("VoiceProvider is required");
 	return value;

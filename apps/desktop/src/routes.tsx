@@ -2,124 +2,72 @@ import {
 	createRootRoute,
 	createRoute,
 	createRouter,
-	Link,
 	Outlet,
 } from "@tanstack/react-router";
-import { MentorHud } from "./components/MentorHud";
-import { desktopRoutes } from "./lib/routes";
-import {
-	HudMessagesProvider,
-	useHudMessages,
-	useSetTutorModel,
-	useTutorModels,
-	useVoiceUrl,
-} from "./lib/ws";
-import { useVoice, VoiceProvider } from "./voice/VoiceProvider";
+import { HudMessagesProvider } from "./lib/ws";
+import { Classroom } from "./pages/Classroom";
+import { ClassroomList } from "./pages/ClassroomList";
+import { GraphHome } from "./pages/GraphHome";
+import { Review } from "./pages/Review";
+import { Sessions } from "./pages/Sessions";
+import { Settings } from "./pages/Settings";
+import { VoiceProvider } from "./voice/VoiceProvider";
+import { MainApp } from "./windows/MainApp";
+import { PillApp } from "./windows/PillApp";
 
 export { desktopRoutes } from "./lib/routes";
 
-function AppFrame() {
-	return (
+const root = createRootRoute({
+	component: () => (
 		<HudMessagesProvider>
 			<VoiceProvider>
-				<main>
-					<header className="app-header">
-						<div>
-							<h1>Study Partner</h1>
-							<p>Live coding companion</p>
-						</div>
-						<nav aria-label="Desktop pages">
-							<Link to="/" activeProps={{ className: "active" }}>
-								Mentor
-							</Link>
-							<Link to="/settings" activeProps={{ className: "active" }}>
-								Settings
-							</Link>
-						</nav>
-					</header>
-					<Outlet />
-				</main>
+				<Outlet />
 			</VoiceProvider>
 		</HudMessagesProvider>
-	);
-}
-
-function Settings() {
-	const { state, setMode } = useHudMessages();
-	const { voice, toggleListening, toggleMute } = useVoice();
-	const { data: tutorModels } = useTutorModels();
-	const setTutorModel = useSetTutorModel();
-	const { data: voiceEndpoint } = useVoiceUrl();
-	return (
-		<section className="settings" aria-label="Settings">
-			<h2>Settings</h2>
-			<label>
-				Study mode
-				<select
-					value={state.activeMode}
-					disabled={!state.modes.length}
-					onChange={(event) => setMode(event.currentTarget.value)}
-				>
-					{state.modes.map((mode) => (
-						<option key={mode.name} value={mode.name}>
-							{mode.title}
-						</option>
-					))}
-				</select>
-			</label>
-			<label>
-				Model
-				<select
-					value={tutorModels?.model ?? ""}
-					disabled={!tutorModels?.models.length || setTutorModel.isPending}
-					onChange={(event) => setTutorModel.mutate(event.currentTarget.value)}
-				>
-					{!tutorModels?.model && <option value="">Choose a model</option>}
-					{tutorModels?.models.map((model) => (
-						<option key={model} value={model}>
-							{model}
-						</option>
-					))}
-				</select>
-			</label>
-			{!tutorModels?.models.length && (
-				<p role="status">No authenticated Pi models available.</p>
-			)}
-			{setTutorModel.isError && (
-				<p role="alert">Could not change the model. Try again.</p>
-			)}
-			<div className="card controls">
-				<strong>Voice</strong>
-				<span>
-					{voiceEndpoint?.ws_url
-						? "Local worker available"
-						: "Local worker offline"}
-				</span>
-				<button
-					type="button"
-					onClick={toggleListening}
-					disabled={!voiceEndpoint?.ws_url}
-				>
-					{voice.listening ? "Stop mic" : "Start mic"}
-				</button>
-				<button type="button" onClick={toggleMute}>
-					{voice.muted ? "Unmute" : "Mute"}
-				</button>
-			</div>
-		</section>
-	);
-}
-
-const rootRoute = createRootRoute({ component: AppFrame });
-const mentorRoute = createRoute({
-	getParentRoute: () => rootRoute,
-	path: desktopRoutes[0],
-	component: MentorHud,
+	),
 });
-const settingsRoute = createRoute({
-	getParentRoute: () => rootRoute,
-	path: desktopRoutes[1],
+const main = createRoute({
+	getParentRoute: () => root,
+	id: "workspace",
+	component: MainApp,
+});
+const graph = createRoute({
+	getParentRoute: () => main,
+	path: "/",
+	component: GraphHome,
+});
+const lessons = createRoute({
+	getParentRoute: () => main,
+	path: "/classroom",
+	component: ClassroomList,
+});
+const lesson = createRoute({
+	getParentRoute: () => main,
+	path: "/classroom/$lessonId",
+	component: () => <Classroom lessonId={lesson.useParams().lessonId} />,
+});
+const sessions = createRoute({
+	getParentRoute: () => main,
+	path: "/sessions",
+	component: Sessions,
+});
+const review = createRoute({
+	getParentRoute: () => main,
+	path: "/review",
+	component: Review,
+});
+const settings = createRoute({
+	getParentRoute: () => main,
+	path: "/settings",
 	component: Settings,
 });
-export const routeTree = rootRoute.addChildren([mentorRoute, settingsRoute]);
+const pill = createRoute({
+	getParentRoute: () => root,
+	path: "/pill",
+	component: PillApp,
+});
+export const routeTree = root.addChildren([
+	main.addChildren([graph, lessons, lesson, sessions, review, settings]),
+	pill,
+]);
 export const router = createRouter({ routeTree });
