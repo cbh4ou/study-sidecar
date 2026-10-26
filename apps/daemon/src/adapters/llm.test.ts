@@ -101,6 +101,59 @@ describe("llm-pi pure parts", () => {
 		expect(llm.isCloud).toBe(true);
 	});
 
+	test("fast lane defaults to cheapest authenticated model", async () => {
+		const models = new Map<string, PiModel>([
+			[
+				"cloud/expensive",
+				{
+					slug: "cloud/expensive",
+					modelId: "expensive",
+					provider: "cloud",
+					baseUrl: "https://api.example.test",
+					cost: { input: 10, output: 20 },
+				},
+			],
+			[
+				"cloud/cheap",
+				{
+					slug: "cloud/cheap",
+					modelId: "cheap",
+					provider: "cloud",
+					baseUrl: "https://api.example.test",
+					cost: { input: 0.1, output: 0.2 },
+				},
+			],
+			[
+				"missing/free",
+				{
+					slug: "missing/free",
+					modelId: "free",
+					provider: "missing",
+					baseUrl: "https://api.example.test",
+					cost: { input: 0, output: 0 },
+				},
+			],
+		]);
+		const used: string[] = [];
+		const llm = await new PiLlm({
+			home: "/fixture",
+			settings: settings(),
+			modelSlug: "cloud/expensive",
+			registry: async () => models,
+			credential: async (_home, provider) => {
+				if (provider === "missing") throw new Error("no auth");
+				return "test";
+			},
+			streamImpl: async function* (model) {
+				used.push(model.id);
+				yield { type: "text_delta", delta: "reply" } as AssistantMessageEvent;
+			},
+		}).init();
+		await llm.complete({ lane: "fast", system: "test", messages: [] });
+		await llm.complete({ lane: "deep", system: "test", messages: [] });
+		expect(used).toEqual(["cheap", "expensive"]);
+	});
+
 	test("missing model and missing auth throw clear errors", async () => {
 		const llm = new PiLlm({
 			home: "/nowhere",

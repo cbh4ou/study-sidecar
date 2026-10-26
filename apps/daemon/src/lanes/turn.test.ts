@@ -469,4 +469,64 @@ describe("lanes feature turn orchestration", () => {
 		expect(learn.cards).toBe(0);
 		void FakeDeepLane;
 	});
+	test("local-only session text never reaches cloud fast or deep lanes", async () => {
+		const llm = { ...fakeLlm(["must not answer"]), isCloud: true };
+		let deepCalls = 0;
+		const h = harness({
+			llm,
+			deep: {
+				async run() {
+					deepCalls++;
+					return { answer: "must not run" };
+				},
+			},
+			decide: rulesDecide("needs_web"),
+		});
+		h.services.privacy = {
+			isLocalOnly: () => true,
+			allowCloud: () => false,
+			redact: (text) => text,
+			indexIntoGraph: () => false,
+		};
+		await h.feature.onClientMessage?.({
+			type: "question",
+			source: "ptt",
+			text: "search private secret from my source",
+		});
+		await h.settled();
+		expect(llm.requests).toHaveLength(0);
+		expect(deepCalls).toBe(0);
+		expect(h.messages.some((message) => message.type === "fast_answer")).toBe(
+			false,
+		);
+	});
+	test("a cancelled slow routing decision cannot replace the newer turn", async () => {
+		let release = () => {};
+		const decide: DecidePort = {
+			async decide(task, input, options) {
+				if (task === "intent" && input.includes("older"))
+					await new Promise<void>((resolve) => {
+						release = resolve;
+					});
+				return certain(options[0] as (typeof options)[number], options, "fake");
+			},
+		};
+		const llm = fakeLlm(["Current answer."]);
+		const h = harness({ llm, decide });
+		await h.feature.onClientMessage?.({
+			type: "question",
+			text: "older ambiguous utterance",
+		});
+		await Bun.sleep(0);
+		await h.feature.onClientMessage?.({
+			type: "question",
+			text: "what is current?",
+		});
+		await h.settled();
+		release();
+		await Bun.sleep(0);
+		await Bun.sleep(0);
+		expect(llm.requests).toHaveLength(1);
+		expect(llm.requests[0]?.messages[0]?.content).toContain("what is current?");
+	});
 });

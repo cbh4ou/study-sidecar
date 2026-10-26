@@ -86,6 +86,7 @@ export class OKFStore {
 		sourceSession = "unknown",
 		mermaid?: string,
 		tool_use_id?: string,
+		sourcePaths: string[] = [],
 	): Promise<string> {
 		title = singleLine(title) || "Untitled";
 		const slug = slugify(title);
@@ -137,6 +138,7 @@ export class OKFStore {
 		const sourceSessions = [
 			...new Set([
 				...priorSources,
+				...sourcePaths,
 				...(priorSourceSession ? [priorSourceSession] : []),
 				effectiveSourceSession,
 			]),

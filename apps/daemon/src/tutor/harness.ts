@@ -81,6 +81,8 @@ export type TutorHarnessOptions = {
 	/** Deep-lane tools contributed by daemon features (graph, learn, research). */
 	extraTools?: () => ToolSpec[];
 	allowCloud?: (path?: string) => boolean;
+	allowExternalCloud?: (path?: string) => boolean;
+	sourcePaths?: () => Promise<string[]>;
 	sourceScope?: string;
 };
 
@@ -218,6 +220,15 @@ export async function openTutorHarness(
 		}
 	};
 	const queryNotebookLm = async (query: string): Promise<string> => {
+		if (
+			(options.allowExternalCloud ?? options.allowCloud)?.() === false ||
+			((await options.sourcePaths?.()) ?? []).some(
+				(path) =>
+					(options.allowExternalCloud ?? options.allowCloud)?.(path) === false,
+			)
+		)
+			throw new Error("NotebookLM is unavailable for local-only sources");
+		query = redact(query);
 		const command = Bun.which("notebooklm");
 		if (!command)
 			throw new Error(
@@ -264,7 +275,12 @@ export async function openTutorHarness(
 				if (options.allowCloud?.() === false) return "Source is local only.";
 				const events = options
 					.events()
-					.filter((event) => options.allowCloud?.(event.session_file) !== false)
+					.filter(
+						(event) =>
+							options.allowCloud?.(event.session_file) !== false &&
+							(!event.file_path ||
+								options.allowCloud?.(event.file_path) !== false),
+					)
 					.slice(-10);
 				const lines = events.map(
 					(event) =>
@@ -356,6 +372,8 @@ export async function openTutorHarness(
 						Array.isArray(args.topics) ? args.topics.map(String) : undefined,
 						options.sourceSession(),
 						typeof args.mermaid === "string" ? args.mermaid : undefined,
+						undefined,
+						await options.sourcePaths?.(),
 					);
 					await recordTool("Saved OKF concept", title);
 					return { output: [{ type: "text", text: `saved ${path}` }] };

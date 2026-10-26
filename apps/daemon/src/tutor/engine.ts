@@ -1,6 +1,7 @@
 import type { SessionEvent, SessionInfo } from "../ingest/events.ts";
 import { OKFStore } from "../memory/okf-store.ts";
 import type { TutorMode } from "../modes/modes.ts";
+import { DECIDE_OPTIONS, type DecidePort } from "../ports/decide.ts";
 import type {
 	DaemonErrorScope,
 	TutorDocuments,
@@ -14,6 +15,7 @@ import {
 	type TutorDocumentPatch,
 	type TutorHarness,
 } from "./harness.ts";
+import { redact } from "./redact.ts";
 
 const PROVIDER_BACKOFF_MS = 120_000;
 export type TutorMessage = TutorEmit;
@@ -121,7 +123,10 @@ export class TutorEngine {
 			openHarness?: typeof openTutorHarness;
 			extraTools?: () => ToolSpec[];
 			allowCloud?: (path?: string) => boolean;
+			allowExternalCloud?: (path?: string) => boolean;
+			sourcePaths?: () => Promise<string[]>;
 			sourceScope?: () => string;
+			decide?: () => DecidePort;
 		} = {},
 	) {
 		this.#tutor = options.harness;
@@ -162,6 +167,8 @@ export class TutorEngine {
 	}
 
 	observe(event: SessionEvent): void {
+		if (event.file_path && this.options.allowCloud?.(event.file_path) === false)
+			return;
 		const preceding = this.#events.slice(-10);
 		this.#events.push(event);
 		if (this.#events.length > 100) this.#events.shift();
@@ -182,20 +189,58 @@ export class TutorEngine {
 			this.#deadAir.touch(event.headline);
 		const findings = detectAntipatterns(event.details);
 		if (findings.length) this.emit({ type: "guardrail", findings });
-		switch (classifyDelta(event, this.mode, findings)) {
-			case "SILENT":
-				return;
-			case "AMBIENT_PILL":
-				if (this.#cooldown()) void this.#insight(event, false);
-				return;
-			case "PROACTIVE_COACH":
-				if (!this.#proactiveAvailable()) return;
-				if (this.#cooldown()) {
-					const claimedAt = this.#claimProactive();
-					if (claimedAt !== undefined)
-						void this.#insight(event, true, claimedAt);
-				} else void this.#steer(event.headline);
+		const react = (delta: DeltaClass) => {
+			switch (delta) {
+				case "SILENT":
+					return;
+				case "AMBIENT_PILL":
+					if (this.#cooldown()) void this.#insight(event, false);
+					return;
+				case "PROACTIVE_COACH":
+					if (!this.#proactiveAvailable()) return;
+					if (this.#cooldown()) {
+						const claimedAt = this.#claimProactive();
+						if (claimedAt !== undefined)
+							void this.#insight(event, true, claimedAt);
+					} else void this.#steer(event.headline);
+			}
+		};
+		const fallback = classifyDelta(event, this.mode, findings);
+		const decide = this.options.decide?.();
+		if (!decide) {
+			react(fallback);
+			return;
 		}
+		const scope = this.options.sourceScope?.();
+		void decide
+			.decide(
+				"delta_class",
+				redact(`${event.headline}\n${event.details}`),
+				DECIDE_OPTIONS.delta_class,
+				{
+					localOnly:
+						(this.options.allowExternalCloud ?? this.options.allowCloud)?.(
+							event.file_path,
+						) === false,
+					context: { event, mode: this.mode, findings },
+				},
+			)
+			.then(
+				(result) => {
+					if (
+						scope === this.options.sourceScope?.() &&
+						this.options.allowCloud?.() !== false
+					)
+						react(result.choice);
+				},
+				() => {
+					if (
+						scope === this.options.sourceScope?.() &&
+						this.options.allowCloud?.() !== false
+					)
+						react(fallback);
+				},
+			);
 	}
 
 	async answer(question: string): Promise<string> {
@@ -408,11 +453,17 @@ export class TutorEngine {
 			mode: () => this.mode,
 			events: () => this.#events,
 			sessionCwd: () => this.#session?.cwd,
-			sourceSession: () => this.#session?.id ?? "standalone",
+			sourceSession: () =>
+				this.options.sourceScope?.() ||
+				this.#events.at(-1)?.session_file ||
+				this.#session?.id ||
+				"standalone",
 			onDocuments: (documents) =>
 				this.emit({ type: "tutor_documents", documents }),
 			extraTools: this.options.extraTools,
 			allowCloud: this.options.allowCloud,
+			allowExternalCloud: this.options.allowExternalCloud,
+			sourcePaths: this.options.sourcePaths,
 			sourceScope,
 		});
 		try {

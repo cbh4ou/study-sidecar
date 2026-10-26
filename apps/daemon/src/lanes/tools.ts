@@ -93,8 +93,9 @@ export function createDeepTools(context: DaemonContext): ToolSpec[] {
 		work: (
 			signal: AbortSignal,
 		) => Promise<{ text: string; sources: SourceRef[] }>,
+		cloud = true,
 	): string => {
-		if (localOnly())
+		if (cloud && localOnly())
 			throw new Error("Research is unavailable for a local-only source.");
 		const lessonId = context.services.learn?.activeLessonId(),
 			job = context.activity.start("research", label);
@@ -112,23 +113,34 @@ export function createDeepTools(context: DaemonContext): ToolSpec[] {
 					);
 				});
 			if (job.signal.aborted) throw new Error("Research stopped");
+			const lesson = lessonId
+				? await context.services.learn?.lesson(lessonId)
+				: undefined;
+			if (
+				cloud &&
+				(localOnly() ||
+					[...(lesson?.anchors ?? []), ...(lesson?.sources ?? [])].some((ref) =>
+						localSource(ref, context),
+					))
+			)
+				throw new Error("Research source is local only.");
 			return work(job.signal);
 		};
 		void deferred()
 			.then(async ({ text, sources }) => {
 				if (job.signal.aborted) return;
 				if (lessonId) {
-					await context.services.learn?.appendMessage(lessonId, {
-						role: "tutor",
-						kind: "text",
-						text,
-					});
 					const learn = context.services
 						.learn as typeof context.services.learn & {
 						addSource?: (id: string, source: SourceRef) => Promise<unknown>;
 					};
 					for (const source of sources)
 						await learn?.addSource?.(lessonId, source);
+					await context.services.learn?.appendMessage(lessonId, {
+						role: "tutor",
+						kind: "text",
+						text,
+					});
 				}
 				context.broadcast({
 					type: "deep_update",
@@ -258,60 +270,64 @@ export function createDeepTools(context: DaemonContext): ToolSpec[] {
 			}),
 			async execute(args) {
 				const input = Paper.parse(args);
-				return background("Read paper", async (signal) => {
-					let text: string;
-					if (context.fake)
-						text = "Fake paper: acknowledgements confirm completed handling.";
-					else {
-						const path = await checkFile(input.path),
-							command = Bun.which("pdftotext");
-						if (!command)
-							throw new Error(
-								"Install poppler-utils to read PDFs (pdftotext).",
+				return background(
+					"Read paper",
+					async (signal) => {
+						let text: string;
+						if (context.fake)
+							text = "Fake paper: acknowledgements confirm completed handling.";
+						else {
+							const path = await checkFile(input.path),
+								command = Bun.which("pdftotext");
+							if (!command)
+								throw new Error(
+									"Install poppler-utils to read PDFs (pdftotext).",
+								);
+							const proc = Bun.spawn(
+								[
+									command,
+									"-f",
+									String(input.page),
+									"-l",
+									String(input.page + input.pages - 1),
+									path,
+									"-",
+								],
+								{ stdout: "pipe", stderr: "pipe", signal },
 							);
-						const proc = Bun.spawn(
-							[
-								command,
-								"-f",
-								String(input.page),
-								"-l",
-								String(input.page + input.pages - 1),
-								path,
-								"-",
+							text = await new Response(proc.stdout).text();
+							if ((await proc.exited) !== 0)
+								throw new Error(await new Response(proc.stderr).text());
+						}
+						const summary = await context.ports.llm.complete({
+							lane: "deep",
+							system:
+								"Summarize this paper section. Cite page numbers for every claim. Use no uncited facts.",
+							messages: [
+								{
+									role: "user",
+									content: redact(
+										`Pages ${input.page}-${input.page + input.pages - 1}\n${text.slice(0, 40000)}`,
+									),
+								},
 							],
-							{ stdout: "pipe", stderr: "pipe", signal },
-						);
-						text = await new Response(proc.stdout).text();
-						if ((await proc.exited) !== 0)
-							throw new Error(await new Response(proc.stderr).text());
-					}
-					const summary = await context.ports.llm.complete({
-						lane: "deep",
-						system:
-							"Summarize this paper section. Cite page numbers for every claim. Use no uncited facts.",
-						messages: [
-							{
-								role: "user",
-								content: redact(
-									`Pages ${input.page}-${input.page + input.pages - 1}\n${text.slice(0, 40000)}`,
-								),
-							},
-						],
-						signal,
-						maxTokens: 1200,
-					});
-					return {
-						text: `${input.path}, page ${input.page}\n\n${summary}`,
-						sources: [
-							{
-								kind: "pdf",
-								path: input.path,
-								page: input.page,
-								quote: text.slice(0, 200),
-							},
-						],
-					};
-				});
+							signal,
+							maxTokens: 1200,
+						});
+						return {
+							text: `${input.path}, page ${input.page}\n\n${summary}`,
+							sources: [
+								{
+									kind: "pdf",
+									path: input.path,
+									page: input.page,
+									quote: text.slice(0, 200),
+								},
+							],
+						};
+					},
+					context.ports.llm.isCloud,
+				);
 			},
 		},
 	];
