@@ -22,9 +22,7 @@ function stripComment(line: string): string {
 	return (at === -1 ? line : line.slice(0, at)).trim();
 }
 
-function parseNode(
-	token: string,
-): { id: string; label?: string } | undefined {
+function parseNode(token: string): { id: string; label?: string } | undefined {
 	const match = NODE.exec(token.trim());
 	if (!match?.[1]) return undefined;
 	const label = (match[2] ?? match[3])?.trim();
@@ -42,7 +40,8 @@ export function planInit(mermaid: string): PlanParseResult {
 
 	const declare = (node: { id: string; label?: string }) => {
 		const existing = nodes.get(node.id);
-		if (!existing) nodes.set(node.id, { id: node.id, label: node.label ?? node.id });
+		if (!existing)
+			nodes.set(node.id, { id: node.id, label: node.label ?? node.id });
 		else if (node.label) existing.label = node.label;
 	};
 

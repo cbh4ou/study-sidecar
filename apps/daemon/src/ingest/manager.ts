@@ -34,11 +34,12 @@ export function sessionDirectories(home: string): Record<Harness, string[]> {
 	};
 }
 
-export async function newestSession(
+/** Every `*.jsonl` session under the selected harness directories. */
+export async function listCandidates(
 	directories: Record<Harness, string[]>,
-	selected: Harness,
-): Promise<Candidate | undefined> {
-	let newest: Candidate | undefined;
+	selected: Harness = "auto",
+): Promise<Candidate[]> {
+	const out: Candidate[] = [];
 	for (const [kind, paths] of Object.entries(directories) as Array<
 		[Harness, string[]]
 	>) {
@@ -57,15 +58,41 @@ export async function newestSession(
 			})) {
 				try {
 					const info = await stat(path);
-					if (!newest || info.mtimeMs > newest.modified)
-						newest = { path, harness: kind, modified: info.mtimeMs };
+					out.push({ path, harness: kind, modified: info.mtimeMs });
 				} catch {
 					// session vanished while scanning
 				}
 			}
 		}
 	}
+	return out;
+}
+
+export async function newestSession(
+	directories: Record<Harness, string[]>,
+	selected: Harness,
+): Promise<Candidate | undefined> {
+	let newest: Candidate | undefined;
+	for (const candidate of await listCandidates(directories, selected))
+		if (!newest || candidate.modified > newest.modified) newest = candidate;
 	return newest;
+}
+
+/** Which harness directory contains `path` (undefined when none does). */
+export function harnessForPath(
+	directories: Record<Harness, string[]>,
+	path: string,
+): Exclude<Harness, "auto"> | undefined {
+	for (const [kind, paths] of Object.entries(directories) as Array<
+		[Harness, string[]]
+	>) {
+		if (kind === "auto") continue;
+		for (const directory of paths) {
+			const prefix = directory.endsWith("/") ? directory : `${directory}/`;
+			if (path.startsWith(prefix)) return kind;
+		}
+	}
+	return undefined;
 }
 
 export class IngestManager {
@@ -75,6 +102,8 @@ export class IngestManager {
 	#durableAbort?: AbortController;
 	#watchedPath = "";
 	#stopped = false;
+	/** Explicit binding: while set, rescans never rotate away from it. */
+	#bound?: Candidate;
 
 	constructor(
 		private readonly host: IngestHost,
@@ -98,13 +127,52 @@ export class IngestManager {
 		this.#releaseTailer();
 	}
 
-	async rescan(): Promise<void> {
+	/** Path of the JSONL currently tailed ("" before the first rotation). */
+	get watchedPath(): string {
+		return this.#watchedPath;
+	}
+
+	/** True while an explicit `bind` suspends newest-session rotation. */
+	get bound(): boolean {
+		return Boolean(this.#bound);
+	}
+
+	/**
+	 * Tail exactly `path` and stop rotating to newer sessions until
+	 * `resumeAuto`. Rebinding the already-tailed path keeps its tailer.
+	 */
+	async bind(path: string, harness?: Harness): Promise<void> {
 		if (this.#stopped) return;
+		const kind =
+			harness && harness !== "auto"
+				? harness
+				: (harnessForPath(this.options.directories, path) ?? "pi");
+		const modified = await stat(path)
+			.then((info) => info.mtimeMs)
+			.catch(() => 0);
+		const target: Candidate = { path, harness: kind, modified };
+		this.#bound = target;
+		clearInterval(this.#timer);
+		this.#timer = undefined;
+		if (path !== this.#watchedPath) await this.#rotate(target);
+	}
+
+	/** Drop an explicit binding and return to newest-session rotation. */
+	async resumeAuto(): Promise<void> {
+		this.#bound = undefined;
+		await this.rescan();
+	}
+
+	async rescan(): Promise<void> {
+		if (this.#stopped || this.#bound) return;
 		const target = await newestSession(
 			this.options.directories,
 			this.options.harness,
 		);
+		// A bind that landed while scanning wins over the scan result.
+		if (this.#stopped || this.#bound) return;
 		if (target && target.path !== this.#watchedPath) await this.#rotate(target);
+		if (this.#bound) return;
 		this.#schedule(
 			target
 				? (this.options.rescanWatchingMs ?? 10_000)

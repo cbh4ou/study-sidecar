@@ -64,7 +64,9 @@ function signature(line: string, language: Language): string {
 			kept = `${kept.slice(0, arrow + 2)} …`;
 	}
 	if (language === "py") return kept;
-	return kept.replace(/\s*\{\s*(\}\s*)?;?$/, "").replace(/\s*\{[^{}]*\}\s*$/, "");
+	return kept
+		.replace(/\s*\{\s*(\}\s*)?;?$/, "")
+		.replace(/\s*\{[^{}]*\}\s*$/, "");
 }
 
 function fallback(text: string, path: string): string {

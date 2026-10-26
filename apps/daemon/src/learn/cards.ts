@@ -73,8 +73,11 @@ export function replayCard(card: Card, reviews: ReviewLogLine[]): FsrsCard {
 		.filter((review) => review.cardId === card.id)
 		.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 	for (const review of ordered) {
-		state = scheduler.next(state, new Date(review.at), RATINGS[review.rating])
-			.card;
+		state = scheduler.next(
+			state,
+			new Date(review.at),
+			RATINGS[review.rating],
+		).card;
 	}
 	return state;
 }
@@ -166,7 +169,12 @@ export class CardStore {
 		return cards.map((card) => {
 			const own = grouped.get(card.id) ?? [];
 			const state = replayCard(card, own);
-			return { card, due: state.due.getTime(), fsrs: state, reviews: own.length };
+			return {
+				card,
+				due: state.due.getTime(),
+				fsrs: state,
+				reviews: own.length,
+			};
 		});
 	}
 
