@@ -342,13 +342,21 @@ function defaultRefs(
 	source: ExtractionSource,
 	batch: ProseMessage[],
 ): SourceRef[] {
+	const sessionSource = /\.jsonl$/.test(source.id);
 	return [
 		...(source.refs ?? []),
-		...batch.map((m) => ({
-			kind: "lesson" as const,
-			lessonId: source.id,
-			messageId: m.id,
-		})),
+		...batch.map(
+			(m): SourceRef =>
+				sessionSource
+					? {
+							kind: "session",
+							harness: "auto",
+							sessionId: source.id,
+							file: source.id,
+							turnId: m.id,
+						}
+					: { kind: "lesson", lessonId: source.id, messageId: m.id },
+		),
 	];
 }
 

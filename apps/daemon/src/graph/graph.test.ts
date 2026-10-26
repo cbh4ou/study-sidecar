@@ -745,3 +745,32 @@ test("derived view prunes old chains when a later stronger argument arrives", ()
 	const snapshot = deriveSnapshot({ nodes, chains: [old, strong] });
 	expect(snapshot.chains).toEqual([strong]);
 });
+
+test("repeated claims retain both session sources for across-session discovery", async () => {
+	const graph = new GraphServiceImpl({
+		root,
+		llm: new ScriptedLlm([]),
+		fake: true,
+	});
+	const text =
+		"An acknowledgement confirms that the consumer handled the message.";
+	graph.noteProse(
+		{ id: "/watched/session-one.jsonl", label: "first" },
+		[{ id: "m1", text }],
+		{ flush: true },
+	);
+	await graph.idle();
+	graph.noteProse(
+		{ id: "/watched/session-two.jsonl", label: "second" },
+		[{ id: "m2", text }],
+		{ flush: true },
+	);
+	await graph.idle();
+	const snapshot = await graph.snapshot();
+	expect(snapshot.nodes).toHaveLength(1);
+	expect(
+		snapshot.nodes[0]?.sources
+			.filter((ref) => ref.kind === "session")
+			.map((ref) => ref.file),
+	).toEqual(["/watched/session-one.jsonl", "/watched/session-two.jsonl"]);
+});

@@ -100,6 +100,28 @@ export function planMerge(state: GraphState, input: MergeInput): MergePlan {
 		});
 	}
 
+	// ponytail: exact-claim provenance scans the live graph; replace with an indexed lookup if graphs outgrow memory.
+	const prose = input.messages
+		.map((message) => message.text.replace(/\s+/g, " ").toLowerCase())
+		.join("\n");
+	const referenced = new Set(
+		input.submit.chains.flatMap((chain) => [
+			...chain.premises,
+			chain.conclusion,
+		]),
+	);
+	for (const existing of state.nodes) {
+		if (
+			!referenced.has(existing.id) &&
+			!prose.includes(existing.statement.replace(/\s+/g, " ").toLowerCase())
+		)
+			continue;
+		const prior = nodes.get(existing.id) ?? existing;
+		const sources = unionRefs(prior.sources, input.refs);
+		if (sources.length !== prior.sources.length)
+			nodes.set(existing.id, { ...prior, sources });
+	}
+
 	const resolve = (ref: string): string => {
 		const mapped = idMap.get(ref);
 		if (mapped) return mapped;
