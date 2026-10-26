@@ -697,3 +697,125 @@ describe("routes and client messages", () => {
 		});
 	});
 });
+
+describe("learning boundary and fake acceptance", () => {
+	test("Measure needs three answered probes and fake flow reaches explain-back", async () => {
+		services.graph = graphWith([
+			proposition(
+				"n_ack",
+				"acknowledgement",
+				"An acknowledgement confirms that the consumer handled the message.",
+			),
+		]);
+		const feature = createLearnFeature(deps());
+		const learn = feature.service;
+		const lesson = await learn.createLesson({
+			goal: "understand acknowledgements",
+		});
+		await expect(learn.setPlan(lesson.id, "graph TD\nA --> B")).rejects.toThrow(
+			"Measure",
+		);
+		await expect(learn.setMeasure(lesson.id, { a: "new" })).rejects.toThrow(
+			"3 to 6",
+		);
+		for (let i = 0; i < 3; i++) {
+			const q = await learn.fakeTurn(lesson.id);
+			expect(q).toBeDefined();
+			if (!q) throw new Error("missing probe");
+			await feature.onClientMessage?.({
+				type: "answer",
+				questionId: q.id,
+				value: q.kind === "quiz" ? q.correctId : "my initial reasoning",
+			});
+		}
+		expect((await learn.lesson(lesson.id))?.phase).toBe("plan");
+		await learn.fakeTurn(lesson.id);
+		expect((await learn.lesson(lesson.id))?.phase).toBe("teach");
+		for (let i = 0; i < 3; i++) {
+			const q = await learn.fakeTurn(lesson.id);
+			if (q?.kind !== "quiz") throw new Error("missing plan quiz");
+			await feature.onClientMessage?.({
+				type: "answer",
+				questionId: q.id,
+				value: q.correctId,
+			});
+		}
+		const detail = await learn.lesson(lesson.id);
+		expect(detail?.planNodes.every((n) => n.status === "visited")).toBe(true);
+		expect(detail?.questions.map((q) => q.kind)).toContain("explain_back");
+		expect(detail?.messages.filter((m) => m.role === "learner")).toHaveLength(
+			6,
+		);
+	});
+	test("voice review commands and recall judgments persist voice provenance", async () => {
+		services.graph = graphWith([
+			proposition("n_ack", "ack", "Acknowledgements confirm handling"),
+		]);
+		const feature = createLearnFeature(deps());
+		const card = await feature.service.createCard({
+			propositionId: "n_ack",
+			question: "What proves handling?",
+			source: { kind: "session", harness: "pi", sessionId: "s" },
+		});
+		const response = await call(
+			feature,
+			"POST",
+			`/api/cards/${card.id}/answer`,
+			{ text: "Good." },
+		);
+		expect(response).toMatchObject({ status: 200, body: { rating: "good" } });
+		expect((await feature.service.cards.reviews())[0]).toMatchObject({
+			by: "voice",
+			answerText: "Good.",
+			rating: "good",
+		});
+		expect(
+			(
+				await call(feature, "POST", `/api/cards/${card.id}/answer`, {
+					text: 17,
+				})
+			).status,
+		).toBe(400);
+	});
+	test("private lesson anchors block recap cloud generation", async () => {
+		let calls = 0;
+		const privatePath = "/private/training.csv";
+		services.privacy = {
+			isLocalOnly: (path) => path === privatePath,
+			allowCloud: (path) => path !== privatePath,
+			indexIntoGraph: () => true,
+			redact: (text) => text,
+		};
+		services.graph = graphWith([
+			proposition(
+				"n_lr",
+				"learning rate",
+				"Learning rates control the update scale",
+			),
+		]);
+		const llm: LlmPort = {
+			...noLlm,
+			isCloud: true,
+			async complete() {
+				calls++;
+				throw new Error("private data sent");
+			},
+		};
+		const feature = createLearnFeature({
+			...deps(false),
+			ports: { decide, llm, clock },
+		});
+		const lesson = await feature.service.createLesson({
+			goal: "learning rates",
+			anchors: [{ kind: "run", path: privatePath, metric: "loss" }],
+		});
+		await feature.service.appendMessage(lesson.id, {
+			role: "tutor",
+			kind: "text",
+			text: "Learning rates control the update scale.",
+		});
+		clock.advance(1000);
+		await feature.service.recap();
+		expect(calls).toBe(0);
+	});
+});

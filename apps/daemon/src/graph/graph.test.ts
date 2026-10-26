@@ -329,21 +329,21 @@ describe("T6 delete cascade", () => {
 					id: chainId(["n_A"], "n_B"),
 					premises: ["n_A"],
 					conclusion: "n_B",
-					createdAt: "",
+					createdAt: "2026-01-01T00:00:00.000Z",
 					sources: [],
 				},
 				{
 					id: chainId(["n_B", "n_C"], "n_D"),
 					premises: ["n_B", "n_C"],
 					conclusion: "n_D",
-					createdAt: "",
+					createdAt: "2026-01-01T00:00:00.000Z",
 					sources: [],
 				},
 				{
 					id: chainId(["n_C"], "n_A"),
 					premises: ["n_C"],
 					conclusion: "n_A",
-					createdAt: "",
+					createdAt: "2026-01-01T00:00:00.000Z",
 					sources: [],
 				},
 			],
@@ -386,21 +386,21 @@ describe("derive", () => {
 				id: "arg_1",
 				premises: ["n_A"],
 				conclusion: "n_B",
-				createdAt: "",
+				createdAt: "2026-01-01T00:00:00.000Z",
 				sources: [],
 			},
 			{
 				id: "arg_2",
 				premises: ["n_A", "n_C"],
 				conclusion: "n_D",
-				createdAt: "",
+				createdAt: "2026-01-01T00:00:00.000Z",
 				sources: [],
 			},
 			{
 				id: "arg_3",
 				premises: ["n_GONE"],
 				conclusion: "n_D",
-				createdAt: "",
+				createdAt: "2026-01-01T00:00:00.000Z",
 				sources: [],
 			},
 		];
@@ -661,7 +661,7 @@ describe("feature routes", () => {
 					id: chainId(["n_A"], "n_B"),
 					premises: ["n_A"],
 					conclusion: "n_B",
-					createdAt: "",
+					createdAt: "2026-01-01T00:00:00.000Z",
 					sources: [],
 				},
 			],
@@ -693,4 +693,55 @@ describe("feature routes", () => {
 		expect(await call("GET", "/api/lessons")).toBeUndefined();
 		expect(await call("POST", "/api/graph")).toBeUndefined();
 	});
+});
+
+test("auditor read tools resolve identity and preserve source provenance", async () => {
+	const store = new GraphStore(root);
+	await store.appendBatch({
+		nodes: [node("n_ACK", "other", "Ack confirms delivery")],
+		chains: [],
+		coverage: [],
+	});
+	const llm = new ScriptedLlm([
+		good,
+		JSON.stringify({
+			calls: [
+				{ tool: "find", text: "ack" },
+				{ tool: "list_propositions", sourceId: "other" },
+			],
+		}),
+		(req) => {
+			expect(req.messages.at(-1)?.content).toContain("n_ACK");
+			return JSON.stringify({ links: [{ newId: "p1", existingId: "n_ACK" }] });
+		},
+	]);
+	await runExtraction(
+		{ store, llm },
+		{
+			id: "lesson-new",
+			label: "lesson",
+			refs: [{ kind: "file", path: "/project/consumer.ts" }],
+		},
+		[{ id: "m", text: "An ack confirms delivery." }],
+	);
+	const state = await store.read();
+	expect(state.byId.get("n_ACK")?.sources).toContainEqual({
+		kind: "file",
+		path: "/project/consumer.ts",
+	});
+});
+
+test("derived view prunes old chains when a later stronger argument arrives", () => {
+	const nodes = [node("n_A"), node("n_B"), node("n_X")];
+	const chain = (premises: string[]) => ({
+		id: chainId(premises, "n_X"),
+		premises,
+		conclusion: "n_X",
+		createdAt: new Date(0).toISOString(),
+		sources: [],
+	});
+	const old = chain(["n_A", "n_B"]),
+		strong = chain(["n_A"]);
+	const snapshot = deriveSnapshot({ nodes, chains: [old, strong] });
+	expect(snapshot.chains).toEqual([strong]);
 });

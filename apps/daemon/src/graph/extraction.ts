@@ -202,7 +202,6 @@ async function llmAudit(
 			`${prop.name} ${(prop.aliases ?? []).join(" ")} ${prop.statement}`,
 			AUDIT_CANDIDATES,
 		);
-		if (!candidates.length) continue;
 		offered.set(prop.id, new Set(candidates.map((c) => c.id)));
 		blocks.push(
 			[

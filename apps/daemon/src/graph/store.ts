@@ -3,11 +3,14 @@ import { join } from "node:path";
 import { ensurePrivateDir, readJsonLines } from "../paths.ts";
 import type { Chain, Proposition, SourceRef } from "../protocol.ts";
 import {
+	ChainSchema,
 	type Coverage,
+	CoverageSchema,
 	isChain,
 	isCoverage,
 	isProposition,
 	isTombstone,
+	PropositionSchema,
 	type Tombstone,
 } from "./contracts.ts";
 
@@ -145,6 +148,9 @@ export class GraphStore {
 	}): Promise<void> {
 		const encode = (values: unknown[]) =>
 			values.map((value) => `${JSON.stringify(value)}\n`).join("");
+		for (const node of batch.nodes) PropositionSchema.parse(node);
+		for (const chain of batch.chains) ChainSchema.parse(chain);
+		for (const line of batch.coverage) CoverageSchema.parse(line);
 		const nodes = encode(batch.nodes);
 		const chains = encode(batch.chains);
 		const coverage = encode(batch.coverage);

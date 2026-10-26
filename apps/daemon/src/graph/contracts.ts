@@ -7,41 +7,48 @@ import type { Chain, Proposition, SourceRef } from "../protocol.ts";
  * (ledgers) or reported back to the model (submits), never guessed.
  */
 
-const lines = z.tuple([z.number().int(), z.number().int()]);
+const lines = z
+	.tuple([z.number().int().positive(), z.number().int().positive()])
+	.refine(([start, end]) => end >= start, "line range must be ordered");
 
 export const SourceRefSchema = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal("session"),
-		harness: z.string(),
-		sessionId: z.string(),
+		harness: z.string().min(1),
+		sessionId: z.string().min(1),
 		turnId: z.string().optional(),
 		file: z.string().optional(),
 		lines: lines.optional(),
 	}),
 	z.object({
 		kind: z.literal("file"),
-		path: z.string(),
+		path: z.string().min(1),
 		lines: lines.optional(),
 	}),
 	z.object({
 		kind: z.literal("web"),
-		url: z.string(),
+		url: z
+			.url()
+			.refine(
+				(url) => /^https?:\/\//i.test(url),
+				"web source must use HTTP or HTTPS",
+			),
 		quote: z.string().max(200).optional(),
 	}),
 	z.object({
 		kind: z.literal("pdf"),
-		path: z.string(),
-		page: z.number().int(),
+		path: z.string().min(1),
+		page: z.number().int().positive(),
 		quote: z.string().max(200).optional(),
 	}),
 	z.object({
 		kind: z.literal("lesson"),
-		lessonId: z.string(),
-		messageId: z.string(),
+		lessonId: z.string().min(1),
+		messageId: z.string().min(1),
 	}),
 	z.object({
 		kind: z.literal("run"),
-		path: z.string(),
+		path: z.string().min(1),
 		metric: z.string().optional(),
 		step: z.number().optional(),
 	}),
@@ -53,19 +60,22 @@ export const PropositionSchema = z.object({
 	statement: z.string().min(1),
 	aliases: z.array(z.string()).optional(),
 	sources: z.array(SourceRefSchema),
-	createdAt: z.string(),
-	birthSource: z.string(),
+	createdAt: z.iso.datetime({ offset: true }),
+	birthSource: z.string().min(1),
 });
 
 export const ChainSchema = z.object({
 	id: z.string().startsWith("arg_"),
 	premises: z.array(z.string()).min(1),
 	conclusion: z.string(),
-	createdAt: z.string(),
+	createdAt: z.iso.datetime({ offset: true }),
 	sources: z.array(SourceRefSchema),
 });
 
-export const TombstoneSchema = z.object({ id: z.string(), at: z.string() });
+export const TombstoneSchema = z.object({
+	id: z.string().min(1),
+	at: z.iso.datetime({ offset: true }),
+});
 export const CoverageSchema = z.object({
 	sourceId: z.string(),
 	messageHash: z.string(),

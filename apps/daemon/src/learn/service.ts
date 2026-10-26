@@ -525,7 +525,14 @@ export class Learn implements LearnService {
 			!(await this.deps.services.graph.get(input.propositionId))
 		)
 			throw new Error(`unknown proposition ${input.propositionId}`);
-		const card = await this.cards.create(input);
+		const node = await this.deps.services.graph?.get(input.propositionId);
+		const cited = node?.sources.find(
+			(ref) => ref.kind === "web" || ref.kind === "pdf",
+		);
+		const card = await this.cards.create({
+			...input,
+			source: cited ?? input.source,
+		});
 		await this.broadcastDue();
 		return card;
 	}
@@ -644,7 +651,11 @@ export class Learn implements LearnService {
 				const note = notes.find(
 					(item) => item.concept === candidate.concept && item.source,
 				);
+				const proposition = await this.deps.services.graph?.get(propositionId);
 				const source: SourceRef =
+					proposition?.sources.find(
+						(ref) => ref.kind === "web" || ref.kind === "pdf",
+					) ??
 					note?.source ??
 					(record
 						? {
