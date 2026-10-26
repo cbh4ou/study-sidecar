@@ -98,6 +98,7 @@ export function createSessionsFeature(
 	let timer: unknown;
 	let stopped = false;
 	let lastPaths = "";
+	let unsubscribe: (() => void) | undefined;
 
 	const announceBound = () => {
 		const path = registry.boundPath;
@@ -205,8 +206,24 @@ export function createSessionsFeature(
 		registry,
 		async start() {
 			await tick();
+			unsubscribe = context.settings.onChange((value) => {
+				if (value.follow === registry.follow) return;
+				void registry
+					.followActive(value.follow)
+					.then(() => {
+						announceBound();
+						context.broadcast({ type: "sessions_changed" });
+					})
+					.catch((error) =>
+						context.broadcast({
+							type: "error",
+							message: `Could not change session binding: ${String(error)}`,
+						}),
+					);
+			});
 		},
 		stop() {
+			unsubscribe?.();
 			stopped = true;
 			if (timer !== undefined) context.ports.clock.clearTimeout(timer);
 		},

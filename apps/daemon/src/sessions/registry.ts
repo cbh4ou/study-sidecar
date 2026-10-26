@@ -332,6 +332,20 @@ export class SessionRegistry implements SessionsService {
 		await this.options.ingest.bind(sessionPath, this.#harness(sessionPath));
 	}
 
+	async followActive(on: boolean): Promise<void> {
+		if (on) {
+			await this.bind(null);
+			return;
+		}
+		this.#binder.reset();
+		this.#follow = false;
+		if (this.boundPath)
+			await this.options.ingest.bind(
+				this.boundPath,
+				this.#harness(this.boundPath),
+			);
+	}
+
 	/** Record a Tier-0 receipt from an ingested event of the bound session. */
 	observe(event: SessionEvent): void {
 		const path = event.session_file ?? this.boundPath;

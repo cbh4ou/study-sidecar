@@ -197,7 +197,7 @@ export class WebProvider implements WebSearchPort {
 	): Promise<WebPage> {
 		let parsed: URL;
 		try {
-			parsed = new URL(url);
+			parsed = new URL(redact(url));
 		} catch {
 			throw new Error(`invalid URL: ${url}`);
 		}

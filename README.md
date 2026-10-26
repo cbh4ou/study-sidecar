@@ -9,7 +9,7 @@ Install [Bun](https://bun.sh) and run `bun install`. The voice worker also uses
 bun run sidecar up --with-voice --with-desktop
 ```
 
-`up` starts the daemon on port `4321` with `--harness auto`. Use `--harness omp|pi|auto` to choose the session source and `--port <port>` to change the daemon port. `--with-voice` starts the local worker and publishes `.run/voice.json` after `ws://127.0.0.1:8879` is reachable. `--with-desktop` starts the desktop dev server; if its dependencies are unavailable, the supervisor opens the daemon URL with `xdg-open` instead. `bun run sidecar status` reports child state, restart counts, and a redacted daemon-token marker; `bun run sidecar down` stops the recorded process tree.
+`up` starts the daemon on port `4321` with `--harness auto`. Use `--harness omp|pi|auto` to choose the session source and `--port <port>` to change the daemon port. `--with-voice` starts the local worker and publishes `.run/voice.json` after `ws://127.0.0.1:8879` is reachable. `--with-desktop` starts the native Tauri shell and its frontend dev server; if its dependencies are unavailable, the supervisor opens the daemon URL with `xdg-open` instead. `bun run sidecar status` reports child state, restart counts, and a redacted daemon-token marker; `bun run sidecar down` stops the recorded process tree.
 
 The daemon port is configurable via `--port`.
 
@@ -27,11 +27,11 @@ Every daemon HTTP and WebSocket request requires the shared token. The superviso
 
 ## HUD behavior
 
-The desktop contracts to a pill: the compact/ambient island is an undecorated ~420×72 window (the Tauri `set_hud_variant` command resizes on HUD state changes) and expands back to 420×700. Ambient, guardrail, and dead-air insights render as Spotter bubbles and are spoken through the active TTS path. Tutor answers may embed `mermaid` fenced diagrams, rendered with `obsidianmd/pele`; clicking a node scrolls to the matching trace entry. The Scratchpad tab renders the durable live canvas and research note. Socratic mode commits interactive questionnaire data, and steering prompts copy with `Alt+C`. Questions typed while disconnected queue and flush on reconnect; daemon errors appear in an aria-live list.
+The desktop contracts to a pill: the compact/ambient island is an undecorated ~420×72 window (the Tauri `set_hud_variant` command resizes on HUD state changes) and expands back to 420×700. Ambient, guardrail, and dead-air insights remain visual. Spoken replies come only from the short fast lane. Tutor answers may embed `mermaid` fenced diagrams, rendered with `obsidianmd/pele`; clicking a node scrolls to the matching trace entry. The Scratchpad tab renders the durable live canvas and research note. Socratic mode commits interactive questionnaire data, and steering prompts copy with `Alt+C`. Questions typed while disconnected queue and flush on reconnect; daemon errors appear in an aria-live list.
 
 ## Voice router
 
-The daemon selects the authenticated local worker first; if it is unavailable and `OPENAI_API_KEY` is set, it selects OpenAI Realtime, otherwise voice is unavailable. Before advertising local voice, it opens `ws://127.0.0.1:8879?token=<voice-token>` and requires the worker's first message to be `ready`; this result is cached briefly. `GET /voice` reports `{ kind, ws_url }`, with `ws_url` set to the daemon's authenticated `/voice-ws` proxy for either available engine, never the worker URL.
+The daemon selects the authenticated local worker first; if it is unavailable, voice remains unavailable unless OpenAI Realtime was explicitly selected and `OPENAI_API_KEY` is set. Before advertising local voice, it opens `ws://127.0.0.1:8879?token=<voice-token>` and requires the worker's first message to be `ready`; this result is cached briefly. `GET /voice` reports `{ kind, ws_url }`, with `ws_url` set to the daemon's authenticated `/voice-ws` proxy for either available engine, never the worker URL.
 
 OpenAI Realtime is routed by the daemon with server VAD and interruption enabled and reads `OPENAI_API_KEY` server-side; it never falls back to a browser-visible environment key. The desktop always connects to the daemon proxy with its daemon token, while the daemon alone sends the separate voice token to the local worker. Both routes stop active playback when speech begins.
 
@@ -42,7 +42,7 @@ The voice worker accepts one authenticated WebSocket client at `ws://127.0.0.1:8
 | Client → daemon proxy → worker | `listen_start`, `listen_stop`, `audio` (`pcm_b16`: base64 s16le, 16 kHz mono), `speak` (`id`, `text`, optional `voice`), `interrupt` |
 | Worker → daemon proxy → client | `ready` (`vad`, `tts`), `vad` (`speech`), final `transcript`, `tts_started`, streamed `tts_audio`, `tts_stopped`, `error` |
 
-Speech starts and ends are reported as VAD events; 600 ms of silence finalizes a transcript. Send `interrupt` to stop active speech output immediately.
+Speech starts and ends are reported as VAD events. Explicit `listen_stop` finalizes push-to-talk immediately; optional VAD listening finalizes after 600 ms of silence. Send `interrupt` to stop active speech output immediately.
 
 ## Tutor harness
 
@@ -78,7 +78,7 @@ bun run sidecar up --fake --with-desktop
 
 Fake mode uses an isolated sidecar home, scripted model/decision/search/voice
 adapters and a read-only session replay. It needs no model credentials, GPU or
-microphone. For browser development, run `SIDECAR_TOKEN=<daemon-token> bun run
+microphone. For browser development, run `SIDECAR_TOKEN=<daemon-token> SIDECAR_PORT=4321 bun run
 --cwd apps/desktop dev`; the token is injected at build time.
 
 The pill stays beside the coding session. Open the main app with Alt+O for the

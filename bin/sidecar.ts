@@ -353,8 +353,8 @@ export function launchChildren(
 	if (withDesktop) {
 		children.push({
 			name: "desktop",
-			command: ["bun", "run", "--cwd", "apps/desktop", "dev"],
-			env: { SIDECAR_TOKEN: token },
+			command: ["bun", "run", "--cwd", "apps/desktop", "desktop"],
+			env: { SIDECAR_TOKEN: token, SIDECAR_PORT: String(port) },
 			fallbackUrl: `http://127.0.0.1:${port}`,
 		});
 	}

@@ -162,6 +162,10 @@ test("full fake daemon registers features, streams both lanes, and owns its writ
 			"/voice",
 		])
 			await api(path);
+		await api("/api/settings", { follow: false });
+		expect((await api("/api/sessions")).follow).toBe(false);
+		await api("/api/settings", { follow: true });
+		expect((await api("/api/sessions")).follow).toBe(true);
 		const { lesson } = await api("/api/lessons", {
 			goal: "Understand acknowledgements",
 		});

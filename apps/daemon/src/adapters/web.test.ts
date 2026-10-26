@@ -127,3 +127,17 @@ describe("FakeWeb", () => {
 		expect(page.text).toContain("acknowledgement");
 	});
 });
+
+test("web fetch redacts URL credentials at its own cloud boundary", async () => {
+	let sent = "";
+	const provider = new WebProvider({
+		settings: settings({ provider: "none" }),
+		fetchImpl: async (url) => {
+			sent = String(url);
+			return new Response("public docs");
+		},
+	});
+	await provider.fetch("https://docs.example/page?api_key=SUPERSECRETVALUE123");
+	expect(sent).not.toContain("SUPERSECRETVALUE123");
+	expect(sent).toContain("api_key=***");
+});

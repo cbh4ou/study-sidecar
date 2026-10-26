@@ -171,11 +171,19 @@ export function createLearnFeature(context: LearnDeps): LearnFeature {
 			stopped = false;
 			scheduleDue();
 		},
-		stop() {
+		async stop() {
 			stopped = true;
 			if (dueTimer !== undefined) clock.clearTimeout(dueTimer);
 			if (idleTimer !== undefined) clock.clearTimeout(idleTimer);
 			dueTimer = idleTimer = undefined;
+			try {
+				await service.recap();
+			} catch (error) {
+				context.broadcast({
+					type: "error",
+					message: `Could not finish session recap: ${error instanceof Error ? error.message : String(error)}`,
+				});
+			}
 		},
 		onConnect(send) {
 			void service

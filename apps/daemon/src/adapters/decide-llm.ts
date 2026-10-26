@@ -13,7 +13,7 @@ const Reply = z.object({
 	confidence: z.number().min(0).max(1).optional(),
 });
 
-const TASK_HINTS: Record<DecideTask, string> = {
+export const TASK_HINTS: Record<DecideTask, string> = {
 	delta_class:
 		"How much should a study tutor react to this coding-session event?",
 	turn_relevance:

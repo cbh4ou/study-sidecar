@@ -866,3 +866,89 @@ test("invalid review lines and malformed lesson records are discarded rather tha
 	);
 	expect(await learn.lesson(lesson.id)).toBeUndefined();
 });
+
+test("stopping a fake session flushes extraction and persists a visible recap", async () => {
+	const graph = graphWith([
+		proposition(
+			"n_ack",
+			"acknowledgements",
+			"An acknowledgement confirms completed handling.",
+		),
+	]);
+	let flushed = false;
+	const offered: Array<{ flush?: boolean }> = [];
+	graph.flush = async () => {
+		flushed = true;
+	};
+	graph.idle = async () => {};
+	graph.noteProse = (_source, _messages, options) =>
+		offered.push(options ?? {});
+	services.graph = graph;
+	const feature = createLearnFeature(deps());
+	feature.start?.();
+	const learn = feature.service;
+	const lesson = await learn.createLesson({ goal: "acknowledgements" });
+	await learn.appendMessage(lesson.id, {
+		role: "tutor",
+		kind: "text",
+		text: "An acknowledgement confirms completed handling.",
+	});
+	await learn.noteConcept({
+		concept: "acknowledgements",
+		why: "avoid redelivery ambiguity",
+	});
+	clock.advance(1000);
+	feature.onEvent?.({
+		timestamp: new Date(clock.now()).toISOString(),
+		event_type: "agent_message",
+		headline: "Session ended",
+		details: "",
+	});
+	await feature.stop?.();
+	expect(flushed).toBe(true);
+	expect(offered.some((options) => options.flush)).toBe(true);
+	const panel = sent.find(
+		(message) =>
+			message.type === "deep_update" &&
+			message.documents.research_scratchpad?.name === "Session recap",
+	);
+	expect(panel).toBeDefined();
+	if (panel?.type !== "deep_update") throw new Error("missing recap");
+	expect(panel.documents.research_scratchpad?.content).toContain(
+		"Topics discussed: acknowledgements",
+	);
+	expect(panel.documents.research_scratchpad?.content).toContain(
+		"Recall prompts:",
+	);
+	expect(panel.documents.research_scratchpad?.content).toContain(
+		"Added 1 review card.",
+	);
+	const detail = await learn.lesson(lesson.id);
+	expect(
+		detail?.messages.some((message) => message.id.startsWith("recap_")),
+	).toBe(true);
+	const count = sent.length;
+	clock.advance(RECAP_IDLE_MS * 2);
+	await Bun.sleep(5);
+	expect(sent).toHaveLength(count);
+	expect(await learn.recap()).toEqual([]);
+	expect(await learn.cards.cards()).toHaveLength(1);
+});
+
+test("recap failure is reported without rejecting daemon shutdown", async () => {
+	const graph = graphWith([]);
+	graph.flush = async () => {
+		throw new Error("ledger unavailable");
+	};
+	services.graph = graph;
+	const feature = createLearnFeature(deps());
+	await feature.service.noteConcept({ concept: "acknowledgements" });
+	await expect(Promise.resolve(feature.stop?.())).resolves.toBeUndefined();
+	expect(
+		sent.some(
+			(message) =>
+				message.type === "error" &&
+				message.message.includes("Could not finish session recap"),
+		),
+	).toBe(true);
+});

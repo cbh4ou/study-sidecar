@@ -1,3 +1,4 @@
+import { daemonUrl } from "../lib/endpoint";
 import { getSidecarToken } from "../lib/token";
 import { MicrophoneCapture, PcmPlayback } from "./audio";
 
@@ -87,7 +88,7 @@ export class VoiceClient {
 		try {
 			const token = await (this.options.getToken ?? getSidecarToken)();
 			const response = await (this.options.fetch ?? fetch)(
-				`${this.options.daemonUrl ?? "http://127.0.0.1:4321"}/voice`,
+				`${this.options.daemonUrl ?? daemonUrl}/voice`,
 				{ headers: token ? { Authorization: `Bearer ${token}` } : {} },
 			);
 			const voice = (await response.json()) as { ws_url?: string | null };
@@ -96,7 +97,7 @@ export class VoiceClient {
 				return this.#set({ status: "offline", detail: offlineMessage });
 			// The daemon is the only endpoint the desktop bearer may reach; a
 			// ws_url anywhere else is refused regardless of port.
-			const base = new URL(this.options.daemonUrl ?? "http://127.0.0.1:4321");
+			const base = new URL(this.options.daemonUrl ?? daemonUrl);
 			const url = new URL(voice.ws_url);
 			if (url.host !== base.host)
 				return this.#set({ status: "offline", detail: offlineMessage });

@@ -149,7 +149,7 @@ export class Learn implements LearnService {
 				refs: this.#provenance(record),
 			},
 			record.messages
-				.filter((m) => m.role === "tutor")
+				.filter((m) => m.role === "tutor" && !m.id.startsWith("recap_"))
 				.map(({ id, text }) => ({ id, text })),
 			{ flush },
 		);
@@ -622,7 +622,10 @@ export class Learn implements LearnService {
 			const lessonId = this.#active;
 			const record = lessonId ? await this.lessons.get(lessonId) : undefined;
 			const tutorMessages = (record?.messages ?? [])
-				.filter((message) => message.role === "tutor")
+				.filter(
+					(message) =>
+						message.role === "tutor" && !message.id.startsWith("recap_"),
+				)
 				.filter((message) => Date.parse(message.at) > since)
 				.slice(-6);
 			if (notes.length === 0 && tutorMessages.length === 0) {
@@ -693,6 +696,46 @@ export class Learn implements LearnService {
 					}),
 				);
 			}
+			const topics = [
+				...new Set([
+					...notes.map((note) => note.concept),
+					...(record ? [record.title] : []),
+				]),
+			].slice(0, 8);
+			const summary = [
+				"# Session recap",
+				`Topics discussed: ${topics.length ? topics.join(", ") : "the current study session"}.`,
+				...(candidates.length
+					? [
+							"",
+							"Recall prompts:",
+							...candidates
+								.slice(0, 5)
+								.map((candidate) => `- ${candidate.question}`),
+						]
+					: []),
+				"",
+				`Added ${created.length} review card${created.length === 1 ? "" : "s"}.`,
+			].join("\n");
+			if (record) {
+				await this.lessons.update(record.id, (fresh) => {
+					fresh.messages.push({
+						id: this.lessons.newId("recap"),
+						at: new Date(this.#clock.now()).toISOString(),
+						role: "tutor",
+						kind: "text",
+						text: summary,
+					});
+				});
+				this.#changed();
+			}
+			this.deps.broadcast({
+				type: "deep_update",
+				turnId: job.id,
+				documents: {
+					research_scratchpad: { name: "Session recap", content: summary },
+				},
+			});
 			this.#lastRecapAt = startedAt;
 			job.update({
 				label: `Session recap: ${created.length} card${created.length === 1 ? "" : "s"}`,

@@ -6,7 +6,8 @@
     "dev": "rsbuild dev",
     "build": "rsbuild build",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "desktop": "tauri dev"
   },
   "dependencies": {
     "@streamdown/cjk": "^1.0.4",

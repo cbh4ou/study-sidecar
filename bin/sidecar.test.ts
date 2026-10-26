@@ -166,7 +166,17 @@ test("keeps daemon and voice credentials in separate child environments", () => 
 		PYTHONDONTWRITEBYTECODE: "1",
 		SIDECAR_VOICE_TOKEN: "voice-token",
 	});
-	expect(desktop?.env).toEqual({ SIDECAR_TOKEN: "daemon-token" });
+	expect(desktop?.env).toEqual({
+		SIDECAR_TOKEN: "daemon-token",
+		SIDECAR_PORT: "4321",
+	});
+	expect(desktop?.command).toEqual([
+		"bun",
+		"run",
+		"--cwd",
+		"apps/desktop",
+		"desktop",
+	]);
 });
 
 test("voice children do not inherit the daemon token", async () => {

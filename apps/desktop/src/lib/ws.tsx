@@ -14,11 +14,11 @@ import {
 } from "../store";
 import type { Connection } from "./connection";
 import { mapStatusToConnection } from "./connection";
+import { daemonUrl, daemonWsUrl } from "./endpoint";
 import { parseDaemonMessage } from "./protocol";
 import { buildSavePayload, type ConceptPayload } from "./save-payload";
 import { getSidecarToken } from "./token";
 
-const daemonUrl = "http://127.0.0.1:4321";
 type DaemonState = {
 	watching: boolean;
 	session: string | null;
@@ -293,8 +293,8 @@ async function connect(): Promise<void> {
 	clearTimeout(reconnectTimer);
 	const token = await authToken();
 	const url = token
-		? `ws://127.0.0.1:4321/ws?token=${encodeURIComponent(token)}`
-		: "ws://127.0.0.1:4321/ws";
+		? `${daemonWsUrl}?token=${encodeURIComponent(token)}`
+		: daemonWsUrl;
 	const current = new WebSocket(url);
 	socket?.close();
 	socket = current;

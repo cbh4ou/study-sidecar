@@ -281,9 +281,22 @@ describe("JevDecide", () => {
 			fetchImpl: async (url, init) => {
 				requests.push({ url: String(url), init });
 				return Response.json({
-					choice: "question",
-					probs: { question: 0.92 },
-					confidence: 0.92,
+					model: "jev-latest",
+					answers: {
+						intent: {
+							type: "choice",
+							choice: "question",
+							probabilities: Object.fromEntries(
+								DECIDE_OPTIONS.intent.map((option) => [
+									option,
+									option === "question"
+										? 0.92
+										: 0.08 / (DECIDE_OPTIONS.intent.length - 1),
+								]),
+							),
+							confidence: 0.92,
+						},
+					},
 				});
 			},
 		});
@@ -295,14 +308,17 @@ describe("JevDecide", () => {
 		expect(decision.adapter).toBe("jev");
 		expect(decision.choice).toBe("question");
 		const [request] = requests;
-		expect(request?.url).toBe("https://api.typesafe.ai/v1/decide");
+		expect(request?.url).toBe("https://api.typesafe.ai/v1/systemone");
 		const headers = request?.init?.headers as Record<string, string>;
 		expect(headers.Authorization).toBe("Bearer jev-key-1");
 		const body = JSON.parse(String(request?.init?.body));
-		expect(body.task).toBe("intent");
-		expect(body.options).toEqual([...DECIDE_OPTIONS.intent]);
+		expect(body.model).toBe("jev-latest");
+		expect(body.questions.intent.type).toBe("choice");
+		expect(Object.keys(body.questions.intent.criteria)).toEqual([
+			...DECIDE_OPTIONS.intent,
+		]);
 		expect(String(request?.init?.body)).not.toContain("SUPERSECRETVALUE123");
-		expect(body.input).toContain("api_key=***");
+		expect(body.state).toContain("api_key=***");
 	});
 
 	test("custom url, bad payload and local_only refusal", async () => {

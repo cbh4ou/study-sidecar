@@ -113,7 +113,7 @@ const tutor = new TutorEngine(
 	},
 	{
 		deadAirSeconds,
-		modelSlug: settings.value.lanes.deep ?? modelSlug ?? "",
+		modelSlug: settings.value.lanes.deep?.trim() || modelSlug || "",
 		extraTools: () => [
 			...(context.services.learn
 				? learnTools(context.services.learn as Learn)
@@ -166,6 +166,7 @@ const context: DaemonContext = {
 		fake,
 		settings,
 		modelSlug: modelSlug ?? undefined,
+		getModelSlug: () => modelSlug ?? undefined,
 	}),
 	settings,
 	activity,
@@ -218,7 +219,7 @@ const features: Feature[] = createFeatures(
 		: ingest,
 );
 settings.onChange((value) => {
-	void tutor.setModel(value.lanes.deep ?? modelSlug ?? "");
+	void tutor.setModel(value.lanes.deep?.trim() || modelSlug || "");
 });
 async function dispatchClientMessage(message: ClientMessage): Promise<boolean> {
 	let handled = false;
@@ -353,7 +354,7 @@ const server = Bun.serve<SocketData>({
 			const next = (body as { model?: unknown } | null)?.model;
 			if (typeof next !== "string" || !availableModels.includes(next))
 				return json({ error: "model is unavailable" }, cors, 400);
-			await tutor.setModel(next);
+			await tutor.setModel(settings.value.lanes.deep?.trim() || next);
 			await saveTutorModel(home, next);
 			modelSlug = next;
 			return json({ model: next }, cors);
