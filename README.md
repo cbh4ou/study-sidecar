@@ -128,7 +128,9 @@ bun run test:browser
 
 The browser check starts a temporary fake daemon and web server. Ports 4321 and
 3137 must be free. It checks real rendered lesson/review/graph/session/pill
-flows and saves screenshots under `.run/mvp-browser/`. Native compilation can
+flows and saves screenshots under `.run/mvp-browser/`. To use an already
+installed Chromium instead of `playwright install`, set
+`PLAYWRIGHT_CHROMIUM_PATH=/path/to/chrome`. Native compilation can
 be checked with `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml`.
 Worker tests run with `uv run --project workers/voice-local --group test pytest
 workers/voice-local/tests -q`.

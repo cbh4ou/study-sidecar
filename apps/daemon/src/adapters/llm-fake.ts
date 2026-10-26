@@ -46,7 +46,12 @@ function lastUser(request: LlmRequest): string {
 	const text =
 		[...request.messages].reverse().find((message) => message.role === "user")
 			?.content ?? "";
-	return text.trim().replace(/[.?!\s]+$/, "");
+	// Lane packets wrap the learner's words in a "## Question" section; echo
+	// only that, so fake answers never repeat the whole context packet.
+	const question = /(?:^|\n)## Question\n([\s\S]*?)(?=\n## |\n\n|$)/.exec(
+		text,
+	)?.[1];
+	return (question ?? text).trim().replace(/[.?!\s]+$/, "");
 }
 
 export function fakeFastAnswer(request: LlmRequest): string {

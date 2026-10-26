@@ -226,6 +226,9 @@ export type PacketBase = {
 	lessonId?: string;
 };
 
+/** Bytes read from a pinned anchor before skeleton extraction. */
+const ANCHOR_READ_BYTES = 256 * 1024;
+
 export type RecallFn = (question: string) => Promise<string[]> | string[];
 
 export type PacketWarmerOptions = {
@@ -397,7 +400,10 @@ export class PacketWarmer {
 			const last = lesson.questions.at(-1);
 			if (last) lessonLines.push(`Last question: ${last.prompt}`);
 			const read =
-				this.options.readFile ?? ((path: string) => Bun.file(path).text());
+				this.options.readFile ??
+				// Anchors are skeletonized to a 900-token budget anyway; never pull
+				// a huge pinned file fully into memory on every turn.
+				((path: string) => Bun.file(path).slice(0, ANCHOR_READ_BYTES).text());
 			for (const anchor of lesson.anchors) {
 				if (anchors.length >= MAX_ANCHORS) break;
 				if (anchor.kind !== "file") continue;

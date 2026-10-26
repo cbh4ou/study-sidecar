@@ -83,6 +83,43 @@ also pass in Chromium.
   a threshold-triggered extraction cannot race ahead without citation provenance.
   The integrated tools enforce this ordering.
 
+## Code review pass (2026-10-26, follow-up)
+
+A review of the integrated branch found and fixed:
+
+- **Model-chosen file reads were unscoped.** `read_run_metrics` and `read_paper`
+  accepted any absolute path, so a cloud model (or text injected through web
+  research) could read files such as `~/.pi/agent/auth.json`; redaction only
+  masks known token formats. Both tools now read only files inside the attached
+  session's repository or the exact file/pdf/run paths the learner added to the
+  active lesson, reject non-files, and cap reads at 64 MB. Regression:
+  `lanes/tools.test.ts` ("file tools only read the attached repo...").
+- **`web_fetch` could reach local services.** HTTPS-only was enforced, but
+  loopback, private, link-local and single-label hosts were not refused, before
+  or after redirects. `isPrivateHost` now blocks them. Regression:
+  `adapters/web.test.ts`.
+- **Pinned anchors were read whole on every turn.** The packet builder now reads
+  at most 256 KB per anchor before skeleton extraction.
+- **Intermittent `factory is undefined` page error.** Rsbuild lazily compiles
+  dynamic imports in dev by default; `pele/lazy` loads diagram types that way and
+  the pill and main windows can request the same chunk concurrently. Dev lazy
+  compilation is now off (`rsbuild.config.ts`). This also affects `tauri dev`.
+- **Stray `<script type="module" src="/src/main.tsx">`** (pre-existing Vite
+  leftover) was shipped in `dist/index.html` and failed to load. Removed; Rsbuild
+  injects the real bundle.
+- **Fake answers echoed the whole context packet.** The fake LLM now echoes only
+  the packet's `## Question` section ("Fake answer to: what is a channel ack.").
+- **Browser acceptance races.** The script sampled DND visibility once instead
+  of waiting, and pressed push-to-talk before the daemon socket connected. Both
+  now wait on observable state. Three consecutive runs pass.
+
+Validation after the review: 282 Bun tests pass, Biome and both TypeScript
+projects are clean, the production build passes, 26 worker tests pass,
+`cargo check`/`cargo test` pass, and `bun run test:browser` passes three runs in
+a row. The OKF keyword-fallback timing test (median under 15 ms) is
+machine-speed sensitive and failed intermittently on a slower container; it
+predates this branch.
+
 ## Material limits
 
 The Jev adapter was corrected to the documented System One Choice request and

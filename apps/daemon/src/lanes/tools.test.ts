@@ -82,3 +82,53 @@ test("research acknowledges before work, cites sources, and supports abort and p
 	);
 	expect(web.queries).toHaveLength(1);
 });
+
+test("file tools only read the attached repo and the lesson's own sources", async () => {
+	const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
+	const { join } = await import("node:path");
+	const { tmpdir } = await import("node:os");
+	const base = await mkdtemp(join(tmpdir(), "sidecar-tools-"));
+	const repo = join(base, "repo");
+	const elsewhere = join(base, "home");
+	await mkdir(repo);
+	await mkdir(elsewhere);
+	const metrics = "step,loss\n1,0.5\n2,0.25";
+	await writeFile(join(repo, "run.csv"), metrics);
+	await writeFile(join(elsewhere, "secret.csv"), metrics);
+	await writeFile(join(elsewhere, "added.csv"), metrics);
+	const context = {
+		fake: true,
+		activity: new ActivityRegistry(),
+		broadcast: () => undefined,
+		watchedPath: () => "session",
+		session: () => ({ id: "s", cwd: repo }),
+		ports: {
+			clock: new FakeClock(),
+			web: new FakeWeb(),
+			llm: new FakeLlm({ delayMs: 0, isCloud: true }),
+		},
+		services: {
+			privacy: { isLocalOnly: () => false },
+			learn: {
+				activeLessonId: () => "lesson",
+				lesson: async () => ({
+					anchors: [],
+					sources: [{ kind: "run", path: join(elsewhere, "added.csv") }],
+				}),
+			},
+		},
+	} as unknown as DaemonContext;
+	const tool = createDeepTools(context).find(
+		(spec) => spec.name === "read_run_metrics",
+	);
+	if (!tool) throw new Error("missing read_run_metrics");
+	const read = (path: string) => tool.execute({ path, metric: "loss" });
+	expect(JSON.parse(await read(join(repo, "run.csv")))).toHaveLength(2);
+	expect(JSON.parse(await read(join(elsewhere, "added.csv")))).toHaveLength(2);
+	await expect(read(join(elsewhere, "secret.csv"))).rejects.toThrow(
+		/not part of the attached repository/,
+	);
+	await expect(read(join(repo, "..", "home", "secret.csv"))).rejects.toThrow(
+		/not part of the attached repository/,
+	);
+});

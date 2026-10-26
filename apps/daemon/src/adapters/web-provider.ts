@@ -7,6 +7,49 @@ import type { FetchImpl } from "./decide-jev.ts";
 export const BRAVE_URL = "https://api.search.brave.com/res/v1/web/search";
 export const TAVILY_URL = "https://api.tavily.com/search";
 const MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Model-chosen URLs must not reach the daemon, other loopback services, or
+ * the private network. Checks literal hosts only (no DNS resolution).
+ */
+export function isPrivateHost(hostname: string): boolean {
+	const host = hostname
+		.toLowerCase()
+		.replace(/^\[|\]$/g, "")
+		.replace(/\.$/, "");
+	if (
+		host === "localhost" ||
+		host.endsWith(".localhost") ||
+		host.endsWith(".local") ||
+		host.endsWith(".internal") ||
+		(!host.includes(".") && !host.includes(":"))
+	)
+		return true;
+	const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+	if (v4) {
+		const [a, b] = [Number(v4[1]), Number(v4[2])];
+		return (
+			a === 0 ||
+			a === 10 ||
+			a === 127 ||
+			(a === 100 && b >= 64 && b <= 127) ||
+			(a === 169 && b === 254) ||
+			(a === 172 && b >= 16 && b <= 31) ||
+			(a === 192 && b === 168) ||
+			a >= 224
+		);
+	}
+	if (host.includes(":"))
+		return (
+			host === "::" ||
+			host === "::1" ||
+			host.startsWith("fc") ||
+			host.startsWith("fd") ||
+			host.startsWith("fe80") ||
+			host.startsWith("::ffff:")
+		);
+	return false;
+}
 const TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_CHARS = 20_000;
 
@@ -203,6 +246,8 @@ export class WebProvider implements WebSearchPort {
 		}
 		if (parsed.protocol !== "https:")
 			throw new Error("only https URLs can be fetched");
+		if (isPrivateHost(parsed.hostname))
+			throw new Error("local and private-network hosts cannot be fetched");
 		const response = await this.#fetch(parsed.toString(), {
 			method: "GET",
 			headers: { Accept: "text/html, text/plain;q=0.9, */*;q=0.5" },
@@ -214,6 +259,8 @@ export class WebProvider implements WebSearchPort {
 		const finalUrl = response.url || parsed.toString();
 		if (!finalUrl.startsWith("https:"))
 			throw new Error("redirected to a non-https URL");
+		if (isPrivateHost(new URL(finalUrl).hostname))
+			throw new Error("redirected to a local or private-network host");
 		const raw = await readCapped(response, MAX_BYTES);
 		const type = response.headers.get("content-type") ?? "";
 		const isHtml = /html|xml/i.test(type) || /^\s*</.test(raw);

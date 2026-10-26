@@ -141,3 +141,22 @@ test("web fetch redacts URL credentials at its own cloud boundary", async () => 
 	expect(sent).not.toContain("SUPERSECRETVALUE123");
 	expect(sent).toContain("api_key=***");
 });
+
+test("fetch refuses loopback, private, and link-local hosts", async () => {
+	const { isPrivateHost } = await import("./web-provider.ts");
+	for (const host of [
+		"localhost",
+		"127.0.0.1",
+		"10.1.2.3",
+		"172.20.0.1",
+		"192.168.1.10",
+		"169.254.169.254",
+		"[::1]",
+		"fd00::1",
+		"intranet",
+		"printer.local",
+	])
+		expect(isPrivateHost(host)).toBe(true);
+	for (const host of ["example.com", "8.8.8.8", "docs.typesafe.ai"])
+		expect(isPrivateHost(host)).toBe(false);
+});

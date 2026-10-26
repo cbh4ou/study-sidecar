@@ -95,7 +95,11 @@ try {
 			Boolean,
 			url,
 		);
-	browser = await chromium.launch({ headless: true });
+	browser = await chromium.launch({
+		headless: true,
+		// Lets CI or a preinstalled browser be used without `playwright install`.
+		executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined,
+	});
 	const context = await browser.newContext({
 		viewport: { width: 1440, height: 1000 },
 	});
@@ -270,6 +274,8 @@ try {
 	await pill
 		.getByRole("button", { name: "Hold to talk", exact: true })
 		.waitFor();
+	// The due badge arrives over the daemon socket: PTT needs it connected.
+	await pill.getByText(/^\d+ due$/).first().waitFor();
 	await pill.keyboard.down("Alt");
 	await pill.keyboard.down("Space");
 	await pill
@@ -304,8 +310,12 @@ try {
 	await pill.getByRole("heading", { name: "Pin this anchor?" }).waitFor();
 	await pill.getByRole("button", { name: "Dismiss", exact: true }).click();
 	await pill.keyboard.press("Alt+d");
-	assert(!(await pill.getByRole("main", { name: "Study pill" }).isVisible()));
+	// DND hides the pill asynchronously; wait instead of sampling once.
+	await pill
+		.getByRole("main", { name: "Study pill" })
+		.waitFor({ state: "hidden" });
 	await pill.keyboard.press("Alt+d");
+	await pill.getByRole("main", { name: "Study pill" }).waitFor();
 	await pill.keyboard.press("Alt+s");
 	await pill.getByRole("button", { name: "Collapse", exact: true }).waitFor();
 	assert.deepEqual(externalRequests, []);

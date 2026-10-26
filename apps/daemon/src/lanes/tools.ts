@@ -1,4 +1,5 @@
-import { readFile, realpath } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
+import { sep } from "node:path";
 import { z } from "zod";
 import type { DaemonContext } from "../feature.ts";
 import type { Proposition, SourceRef } from "../protocol.ts";
@@ -74,6 +75,31 @@ export function visiblePropositions(
 			),
 	);
 }
+/** Upper bound for files the deep-lane tools read into memory. */
+export const MAX_TOOL_FILE_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Files a model-invoked tool may read: anything under the attached
+ * session's repository, plus the exact file/pdf/run paths the learner added
+ * to the active lesson as anchors or sources.
+ */
+export async function readableFiles(
+	context: Pick<DaemonContext, "services" | "session">,
+): Promise<{ roots: string[]; files: Set<string> }> {
+	const roots: string[] = [];
+	const cwd = context.session()?.cwd;
+	if (cwd) roots.push(await realpath(cwd).catch(() => cwd));
+	const files = new Set<string>();
+	const lessonId = context.services.learn?.activeLessonId();
+	const lesson = lessonId
+		? await context.services.learn?.lesson(lessonId)
+		: undefined;
+	for (const ref of [...(lesson?.anchors ?? []), ...(lesson?.sources ?? [])])
+		if (ref.kind === "file" || ref.kind === "pdf" || ref.kind === "run")
+			files.add(await realpath(ref.path).catch(() => ref.path));
+	return { roots, files };
+}
+
 export function createDeepTools(context: DaemonContext): ToolSpec[] {
 	const localOnly = () =>
 		context.services.privacy?.isLocalOnly(
@@ -81,11 +107,28 @@ export function createDeepTools(context: DaemonContext): ToolSpec[] {
 		) ?? false;
 	const checkFile = async (path: string) => {
 		const actual = await realpath(path);
+		// The model chooses these paths, so only files the learner already
+		// exposed are readable: the attached repository and the active lesson's
+		// own anchors and sources. Never arbitrary home-directory files.
+		const allowed = await readableFiles(context);
+		const inRepo = allowed.roots.some(
+			(root) => actual === root || actual.startsWith(`${root}${sep}`),
+		);
+		if (!inRepo && !allowed.files.has(actual))
+			throw new Error(
+				"That file is not part of the attached repository or this lesson's sources. Ask the learner to add it as a lesson source first.",
+			);
 		if (
 			context.ports.llm.isCloud &&
 			context.services.privacy?.isLocalOnly(actual)
 		)
 			throw new Error("This source is local only.");
+		const info = await stat(actual);
+		if (!info.isFile()) throw new Error("That path is not a file.");
+		if (info.size > MAX_TOOL_FILE_BYTES)
+			throw new Error(
+				`That file is larger than ${MAX_TOOL_FILE_BYTES / 1024 / 1024} MB.`,
+			);
 		return actual;
 	};
 	const background = (
