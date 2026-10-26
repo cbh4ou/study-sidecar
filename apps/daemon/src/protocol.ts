@@ -447,9 +447,182 @@ export function parseClientMessage(value: unknown): ClientMessage | undefined {
 	return parsed.success ? parsed.data : undefined;
 }
 
+const SourceBoundary = z.discriminatedUnion("kind", [
+	z.object({
+		kind: z.literal("session"),
+		harness: z.string(),
+		sessionId: z.string(),
+		turnId: z.string().optional(),
+		file: z.string().optional(),
+		lines: z
+			.tuple([z.number().int().positive(), z.number().int().positive()])
+			.optional(),
+	}),
+	z.object({
+		kind: z.literal("file"),
+		path: z.string(),
+		lines: z
+			.tuple([z.number().int().positive(), z.number().int().positive()])
+			.optional(),
+	}),
+	z.object({
+		kind: z.literal("web"),
+		url: z.url(),
+		quote: z.string().max(200).optional(),
+	}),
+	z.object({
+		kind: z.literal("pdf"),
+		path: z.string(),
+		page: z.number().int().positive(),
+		quote: z.string().max(200).optional(),
+	}),
+	z.object({
+		kind: z.literal("lesson"),
+		lessonId: z.string(),
+		messageId: z.string(),
+	}),
+	z.object({
+		kind: z.literal("run"),
+		path: z.string(),
+		metric: z.string().optional(),
+		step: z.number().optional(),
+	}),
+]);
+const QuestionBoundary = z.discriminatedUnion("kind", [
+	z.object({
+		kind: z.literal("quiz"),
+		id: z.string(),
+		prompt: z.string(),
+		options: z.array(z.object({ id: z.string(), label: z.string() })).min(2),
+		correctId: z.string(),
+		planNode: z.string().optional(),
+	}),
+	z.object({ kind: z.literal("ask"), id: z.string(), prompt: z.string() }),
+	z.object({
+		kind: z.literal("explain_back"),
+		id: z.string(),
+		prompt: z.string(),
+		expectedPropositions: z.array(z.string()).min(1),
+	}),
+]);
+const TelemetryBoundary = z.object({
+	packet_tokens: z.number().nonnegative(),
+	stt_ms: z.number().nonnegative().optional(),
+	decide_ms: z.number().nonnegative().optional(),
+	decide_adapter: z.string().optional(),
+	fast_ttft_ms: z.number().nonnegative().optional(),
+	tts_first_audio_ms: z.number().nonnegative().optional(),
+	deep_total_ms: z.number().nonnegative().optional(),
+});
+const DocumentsBoundary = z.object({
+	hud_state: z
+		.object({
+			status: z.enum(["idle", "thinking", "speaking", "error"]),
+			mode: z.string(),
+			message: z.string(),
+		})
+		.optional(),
+	scratchpad_diagram: z.object({ diagram: z.string() }).optional(),
+	socratic_quiz: z
+		.object({
+			question: z.string(),
+			options: z.array(z.object({ id: z.string(), label: z.string() })),
+			correctId: z.string().optional(),
+		})
+		.optional(),
+	steering_prompt: z.object({ prompt: z.string() }).optional(),
+	research_scratchpad: z
+		.object({ name: z.string(), content: z.string() })
+		.optional(),
+	tutor_trace: z
+		.array(
+			z.object({
+				label: z.string(),
+				detail: z.string(),
+				status: z.enum(["running", "ok", "error"]),
+			}),
+		)
+		.optional(),
+});
+const MvpDaemonBoundaries = {
+	turn_started: z.object({
+		type: z.literal("turn_started"),
+		turnId: z.string(),
+		source: z.enum(["ptt", "typed", "mcp"]),
+		lessonId: z.string().optional(),
+	}),
+	transcript: z.object({
+		type: z.literal("transcript"),
+		turnId: z.string(),
+		text: z.string(),
+		final: z.boolean(),
+	}),
+	fast_answer: z.object({
+		type: z.literal("fast_answer"),
+		turnId: z.string(),
+		text: z.string(),
+	}),
+	deep_update: z.object({
+		type: z.literal("deep_update"),
+		turnId: z.string(),
+		documents: DocumentsBoundary,
+	}),
+	turn_settled: z.object({
+		type: z.literal("turn_settled"),
+		turnId: z.string(),
+		telemetry: TelemetryBoundary,
+	}),
+	question: z.object({
+		type: z.literal("question"),
+		lessonId: z.string().optional(),
+		question: QuestionBoundary,
+	}),
+	cards_due: z.object({
+		type: z.literal("cards_due"),
+		count: z.number().int().nonnegative(),
+	}),
+	card_prompt: z.object({
+		type: z.literal("card_prompt"),
+		card: z.object({
+			id: z.string(),
+			propositionId: z.string(),
+			question: z.string(),
+			example: z.string().optional(),
+			source: SourceBoundary,
+			createdAt: z.string(),
+		}),
+	}),
+	anchor_suggest: z.object({
+		type: z.literal("anchor_suggest"),
+		anchor: SourceBoundary,
+		preview: z.string(),
+	}),
+	activity: z.object({
+		type: z.literal("activity"),
+		jobs: z.array(
+			z.object({
+				id: z.string(),
+				kind: z.enum(["deep", "research", "extraction", "recap"]),
+				label: z.string(),
+				status: z.enum(["queued", "running", "done", "error"]),
+			}),
+		),
+	}),
+	bound_session: z.object({
+		type: z.literal("bound_session"),
+		sessionPath: z.string(),
+		follow: z.boolean(),
+	}),
+};
+
 /** Validate an unknown value as a daemon-to-client message, or undefined. */
 export function parseDaemonMessage(value: unknown): DaemonMessage | undefined {
 	if (!isRecord(value) || typeof value.type !== "string") return undefined;
+	if (Object.hasOwn(MvpDaemonBoundaries, value.type)) {
+		const schema =
+			MvpDaemonBoundaries[value.type as keyof typeof MvpDaemonBoundaries];
+		if (!schema.safeParse(value).success) return undefined;
+	}
 	switch (value.type) {
 		case "session_init":
 			return (value.session_id === undefined ||

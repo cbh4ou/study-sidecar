@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { DaemonContext, Feature } from "./feature.ts";
 import type { Learn } from "./learn/service.ts";
 import type { SourceRef } from "./protocol.ts";
@@ -35,7 +36,13 @@ export function createAnchorFeature(context: DaemonContext): Feature {
 				const picked = candidates[Number(decision.choice)] ?? latest;
 				const session = context.services.sessions?.bound();
 				const anchor: SourceRef = picked.file_path
-					? { kind: "file", path: picked.file_path }
+					? {
+							kind: "file",
+							path: resolve(
+								context.session()?.cwd ?? process.cwd(),
+								picked.file_path,
+							),
+						}
 					: {
 							kind: "session",
 							harness: session?.harness ?? "auto",
