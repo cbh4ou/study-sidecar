@@ -45,7 +45,9 @@ export type TurnDeps = {
 	newTurnId?: () => string;
 };
 
-type QuestionMessage = Extract<ClientMessage, { type: "question" }>;
+type QuestionMessage = Extract<ClientMessage, { type: "question" }> & {
+	continuation?: boolean;
+};
 
 type ActiveTurn = {
 	turnId: string;
@@ -184,6 +186,7 @@ export class TurnRunner {
 				needsWeb: routed.lane === "needs_web",
 				localOnly,
 				label: boundPath,
+				continuation: input.continuation,
 			});
 		} catch (error) {
 			if (!(error instanceof AbortError) && !turn.controller.signal.aborted)
@@ -241,6 +244,7 @@ export class TurnRunner {
 			needsWeb: boolean;
 			localOnly: boolean;
 			label?: string;
+			continuation?: boolean;
 		},
 	): Promise<void> {
 		const { deps } = this;
@@ -253,7 +257,7 @@ export class TurnRunner {
 						?.appendMessage(lessonId, { role, kind: "text", text: body })
 						.catch(() => undefined)
 				: undefined;
-		await append("learner", text);
+		if (!opts.continuation) await append("learner", text);
 		const packet = await deps.packets.build(text, opts);
 		turn.telemetry.packet_tokens = packet.tokens;
 		if (signal.aborted) return;

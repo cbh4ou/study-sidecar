@@ -84,6 +84,7 @@ export function createLanesFeature(
 		...(options.newTurnId ? { newTurnId: options.newTurnId } : {}),
 	});
 
+	const continuedAnswers = new Set<string>();
 	return {
 		name: "lanes",
 		start() {
@@ -109,13 +110,22 @@ export function createLanesFeature(
 					return true;
 				case "answer": {
 					const id = services.learn?.activeLessonId();
-					if (!context.fake && id)
-						void runner.question({
-							type: "question",
-							source: "typed",
-							lessonId: id,
-							text: "Continue the lesson after my latest answer. Assess the reasoning before moving on, then ask the next prerequisite probe or teach one concept.",
-						});
+					if (context.fake || !id || continuedAnswers.has(message.questionId))
+						return false;
+					const lesson = await services.learn?.lesson(id);
+					if (!lesson?.answers[message.questionId]) return false;
+					continuedAnswers.add(message.questionId);
+					if (continuedAnswers.size > 5000)
+						continuedAnswers.delete(
+							continuedAnswers.values().next().value ?? "",
+						);
+					void runner.question({
+						type: "question",
+						source: "typed",
+						lessonId: id,
+						continuation: true,
+						text: "Continue the lesson after my latest answer. Assess the reasoning before moving on, then ask the next prerequisite probe or teach one concept.",
+					});
 					return false;
 				}
 				case "question":
