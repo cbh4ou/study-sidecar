@@ -21,6 +21,7 @@ import { OKFStore } from "./memory/okf-store.ts";
 import { loadModes } from "./modes/modes.ts";
 import { sidecarHome } from "./paths.ts";
 import {
+	type ClientMessage,
 	type DaemonMessage,
 	parseClientMessage,
 	type TutorDocuments,
@@ -126,8 +127,28 @@ const context: DaemonContext = {
 	session: () => session,
 	watchedPath: () => watched,
 	ingestEvent: (event) => addEvent(event),
+	dispatch: (message) => dispatchClientMessage(message),
 };
 const features: Feature[] = createFeatures(context);
+async function dispatchClientMessage(message: ClientMessage): Promise<boolean> {
+	let handled = false;
+	if (message.type === "abort_job") {
+		activity.abort(message.jobId);
+		handled = true;
+	}
+	for (const feature of features) {
+		try {
+			if (await feature.onClientMessage?.(message)) handled = true;
+		} catch (error) {
+			broadcast({
+				type: "daemon_error",
+				scope: "provider",
+				message: `${feature.name}: ${error instanceof Error ? error.message : String(error)}`,
+			});
+		}
+	}
+	return handled;
+}
 function addEvent(event: SessionEvent): void {
 	events.push(event);
 	if (events.length > 100) events.shift();
@@ -431,23 +452,7 @@ const server = Bun.serve<SocketData>({
 			try {
 				const parsed = parseClientMessage(JSON.parse(value));
 				if (!parsed) return;
-				let handled = false;
-				if (parsed.type === "abort_job") {
-					activity.abort(parsed.jobId);
-					handled = true;
-				}
-				for (const feature of features) {
-					try {
-						if (await feature.onClientMessage?.(parsed)) handled = true;
-					} catch (error) {
-						broadcast({
-							type: "daemon_error",
-							scope: "provider",
-							message: `${feature.name}: ${error instanceof Error ? error.message : String(error)}`,
-						});
-					}
-				}
-				if (handled) return;
+				if (await dispatchClientMessage(parsed)) return;
 				const incoming: unknown = parsed;
 				if (
 					!incoming ||

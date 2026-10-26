@@ -38,6 +38,8 @@ export type DaemonContext = {
 	watchedPath(): string;
 	/** Feed a synthetic SessionEvent through the normal ingest path (fake replay). */
 	ingestEvent(event: SessionEvent): void;
+	/** Run a ClientMessage through every feature as if a desktop sent it (MCP). */
+	dispatch(message: ClientMessage): Promise<boolean>;
 };
 
 export type RouteResult = Response | undefined | Promise<Response | undefined>;
