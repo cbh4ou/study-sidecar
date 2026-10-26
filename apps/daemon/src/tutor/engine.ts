@@ -102,6 +102,7 @@ export class TutorEngine {
 	#tutor?: TutorHarness;
 	#opening?: Promise<TutorHarness>;
 	#openedScope?: string;
+	#interruptRevision = 0;
 	#cancelling: Promise<void> = Promise.resolve();
 	#modelSlug: string;
 	#lastProviderError = 0;
@@ -153,6 +154,7 @@ export class TutorEngine {
 			.catch(() => undefined);
 	}
 	reset(): void {
+		this.interrupt();
 		this.#events = [];
 		this.#session = undefined;
 		this.#lastSpoke = 0;
@@ -244,7 +246,17 @@ export class TutorEngine {
 	}
 
 	async answer(question: string): Promise<string> {
+		const revision = this.#interruptRevision;
+		const scope = this.options.sourceScope?.();
+		const check = () => {
+			if (
+				revision !== this.#interruptRevision ||
+				scope !== this.options.sourceScope?.()
+			)
+				throw new DOMException("Tutor turn interrupted", "AbortError");
+		};
 		const tutor = await this.#tutorHandle();
+		check();
 		await tutor.updateDocuments({
 			hud_state: {
 				status: "thinking",
@@ -252,9 +264,11 @@ export class TutorEngine {
 				message: question.slice(0, 500),
 			},
 		});
+		check();
 		const answer = await this.#generate(
 			`### Developer Question / Learning Query\n${question}\n\nPlease answer the question as Sidecar Tutor.`,
 		);
+		check();
 		const mermaid = [...answer.matchAll(/```mermaid\s*\r?\n([\s\S]*?)```/gi)]
 			.at(-1)?.[1]
 			?.trim();
@@ -291,6 +305,7 @@ export class TutorEngine {
 	}
 
 	interrupt(): void {
+		this.#interruptRevision++;
 		this.#cancelling = (this.#tutor?.abort?.() ?? Promise.resolve()).catch(
 			() => undefined,
 		);
@@ -336,6 +351,7 @@ export class TutorEngine {
 	}
 
 	#fail(scope: DaemonErrorScope, message: string, error: unknown): void {
+		if (error instanceof Error && error.name === "AbortError") return;
 		const detail = error instanceof Error ? error.message : String(error);
 		this.emit({
 			type: "daemon_error",
@@ -422,13 +438,21 @@ export class TutorEngine {
 	}
 
 	async #generate(prompt: string): Promise<string> {
+		const revision = this.#interruptRevision;
+		const scope = this.options.sourceScope?.();
 		await this.#cancelling;
 		if (this.options.allowCloud?.() === false)
 			throw new Error("This source is local only.");
 		try {
 			const answer = await (await this.#tutorHandle()).converse(prompt);
+			if (
+				revision !== this.#interruptRevision ||
+				scope !== this.options.sourceScope?.()
+			)
+				throw new DOMException("Tutor turn interrupted", "AbortError");
 			return answer;
 		} catch (error) {
+			if (error instanceof Error && error.name === "AbortError") throw error;
 			if (
 				error instanceof Error &&
 				/already belongs|storage error|close and reopen/i.test(error.message)
@@ -443,6 +467,8 @@ export class TutorEngine {
 
 	async #tutorHandle(): Promise<TutorHarness> {
 		const sourceScope = this.options.sourceScope?.();
+		if (this.#opening && sourceScope !== this.#openedScope)
+			await this.#opening.catch(() => undefined);
 		if (this.#tutor && sourceScope !== this.#openedScope) await this.close();
 		this.#openedScope = sourceScope;
 		if (this.#tutor) return this.#tutor;

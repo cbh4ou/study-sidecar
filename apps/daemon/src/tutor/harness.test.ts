@@ -262,4 +262,34 @@ describe("tutor durable harness", () => {
 		);
 		await tutor.close();
 	});
+	test("native abort cancels the active provider request", async () => {
+		const home = await mkdtemp("/tmp/sidecar-abort-");
+		temporary.push(home);
+		const { tutor, faux } = await harness(home);
+		let enteredResolve = () => {};
+		const entered = new Promise<void>((resolve) => {
+			enteredResolve = resolve;
+		});
+		faux.setResponses([
+			async (_context, options) => {
+				enteredResolve();
+				return new Promise<never>((_resolve, reject) => {
+					options?.signal?.addEventListener(
+						"abort",
+						() => reject(new DOMException("aborted", "AbortError")),
+						{ once: true },
+					);
+				});
+			},
+		]);
+		const outcome = tutor
+			.converse("keep working until interrupted")
+			.catch((error) => error);
+		await entered;
+		await tutor.abort?.();
+		const error = await outcome;
+		expect(error).toBeInstanceOf(Error);
+		expect(error.name).toBe("AbortError");
+		await tutor.close();
+	}, 10000);
 });

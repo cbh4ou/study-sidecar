@@ -709,6 +709,11 @@ export async function openTutorHarness(
 					context,
 				)
 			).wait(context);
+			if (
+				settled.status === "unanswered" &&
+				/abort|withdraw|cancel/i.test(settled.reason)
+			)
+				throw new DOMException("Tutor turn interrupted", "AbortError");
 			if (settled.status !== "done" || settled.type !== "input")
 				throw new Error(
 					`tutor conversation unanswered (${settled.status === "unanswered" ? settled.reason : settled.status})`,

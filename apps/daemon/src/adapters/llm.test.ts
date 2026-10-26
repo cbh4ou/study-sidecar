@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { AssistantMessageEvent, Context } from "@earendil-works/pi-ai";
+import {
+	fauxAssistantMessage,
+	fauxToolCall,
+} from "@earendil-works/pi-ai/providers/faux";
 import { DEFAULT_SETTINGS, type StoredSettings } from "../settings.ts";
 import type { PiModel } from "../tutor/provider.ts";
 import { FakeLlm, registerFakeJsonResponder } from "./llm-fake.ts";
@@ -152,6 +156,60 @@ describe("llm-pi pure parts", () => {
 		await llm.complete({ lane: "fast", system: "test", messages: [] });
 		await llm.complete({ lane: "deep", system: "test", messages: [] });
 		expect(used).toEqual(["cheap", "expensive"]);
+	});
+
+	test("structured completions declare one required submit tool and consume its arguments", async () => {
+		let sent: Context | undefined;
+		let choice: string | undefined;
+		const llm = await new PiLlm({
+			home: "/fixture",
+			settings: settings({ deep: "cloud/big" }),
+			registry: async () => registry,
+			credential: async () => "test",
+			streamImpl: async function* (_model, context, options) {
+				sent = context;
+				choice = options.toolChoice;
+				const toolCall = fauxToolCall("submit_graph", {
+					propositions: [{ statement: "An ack confirms handling" }],
+					chains: [],
+				});
+				const message = fauxAssistantMessage([toolCall], {
+					stopReason: "toolUse",
+				});
+				yield {
+					type: "toolcall_end",
+					toolCall,
+					partial: message,
+					contentIndex: 0,
+				};
+				yield { type: "done", reason: "toolUse", message };
+			},
+		}).init();
+		const reply = await llm.complete({
+			lane: "deep",
+			system: "Extract claims",
+			messages: [{ role: "user", content: "A channel ack confirms handling" }],
+			json: true,
+			submit: {
+				name: "submit_graph",
+				description: "Submit the extracted claims",
+				parameters: {
+					type: "object",
+					properties: {
+						propositions: { type: "array" },
+						chains: { type: "array" },
+					},
+					required: ["propositions", "chains"],
+				},
+			},
+		});
+		expect(choice).toBe("required");
+		expect(sent?.tools?.map((tool) => tool.name)).toEqual(["submit_graph"]);
+		expect(sent?.systemPrompt).toContain("Call submit_graph");
+		expect(sent?.systemPrompt).not.toContain("Reply with exactly one JSON");
+		expect(JSON.parse(reply).propositions[0].statement).toBe(
+			"An ack confirms handling",
+		);
 	});
 
 	test("missing model and missing auth throw clear errors", async () => {

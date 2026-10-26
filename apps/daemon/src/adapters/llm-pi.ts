@@ -5,6 +5,7 @@ import type {
 	Message,
 	Model,
 } from "@earendil-works/pi-ai";
+import { Type } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { createModels, createProvider } from "@earendil-works/pi-ai/models";
 import type { Lane, LlmPort, LlmRequest } from "../ports/llm.ts";
@@ -23,7 +24,12 @@ const PROVIDER_ID = "sidecar-lanes";
 export type PiStreamImpl = (
 	model: Model<"openai-completions">,
 	context: Context,
-	options: { apiKey: string; signal?: AbortSignal; maxTokens?: number },
+	options: {
+		apiKey: string;
+		signal?: AbortSignal;
+		maxTokens?: number;
+		toolChoice?: "required";
+	},
 ) => AsyncIterable<AssistantMessageEvent>;
 
 export type LlmPiOptions = {
@@ -99,9 +105,11 @@ export function buildContext(
 	now = Date.now(),
 ): Context {
 	const clean = (text: string) => (cloud ? redact(text) : text);
-	const jsonRule = request.json
-		? "\n\nReply with exactly one JSON value and nothing else."
-		: "";
+	const jsonRule = request.submit
+		? `\n\nCall ${request.submit.name} exactly once with the structured result. Do not reply with prose.`
+		: request.json
+			? "\n\nReply with exactly one JSON value and nothing else."
+			: "";
 	const messages: Message[] = request.messages.map((message): Message => {
 		const content = clean(message.content);
 		if (message.role === "system")
@@ -127,7 +135,25 @@ export function buildContext(
 		};
 		return assistant;
 	});
-	return { systemPrompt: clean(request.system + jsonRule), messages };
+	return {
+		systemPrompt: clean(request.system + jsonRule),
+		messages,
+		...(request.submit
+			? {
+					tools: [
+						{
+							name: request.submit.name,
+							description: clean(
+								request.submit.description ?? "Submit the structured result",
+							),
+							parameters: Type.Unsafe(
+								JSON.parse(clean(JSON.stringify(request.submit.parameters))),
+							),
+						},
+					],
+				}
+			: {}),
+	};
 }
 
 function messageText(message: AssistantMessage): string {
@@ -278,6 +304,7 @@ export class PiLlm implements LlmPort {
 			models.stream(model, context, {
 				signal: options.signal,
 				maxTokens: options.maxTokens,
+				toolChoice: options.toolChoice,
 			});
 		this.#streams.clear();
 		this.#streams.set(cacheKey, impl);
@@ -296,6 +323,7 @@ export class PiLlm implements LlmPort {
 			apiKey: resolved.apiKey,
 			signal: request.signal,
 			maxTokens,
+			...(request.submit ? { toolChoice: "required" } : {}),
 		});
 	}
 
@@ -313,14 +341,36 @@ export class PiLlm implements LlmPort {
 	async complete(request: LlmRequest & { json?: boolean }): Promise<string> {
 		let text = "";
 		let final: string | undefined;
+		let submitted: string | undefined;
 		for await (const event of this.#events(request)) {
 			if (event.type === "text_delta") text += event.delta;
-			else if (event.type === "done") final = messageText(event.message);
-			else if (event.type === "error")
+			else if (
+				event.type === "toolcall_end" &&
+				event.toolCall.name === request.submit?.name
+			) {
+				if (event.toolCall.argumentsError)
+					throw new Error(event.toolCall.argumentsError);
+				submitted = JSON.stringify(event.toolCall.arguments);
+			} else if (event.type === "done") {
+				final = messageText(event.message);
+				const call = event.message.content.find(
+					(part) =>
+						part.type === "toolCall" && part.name === request.submit?.name,
+				);
+				if (call?.type === "toolCall") {
+					if (call.argumentsError) throw new Error(call.argumentsError);
+					submitted = JSON.stringify(call.arguments);
+				}
+			} else if (event.type === "error")
 				throw new Error(
 					event.error.errorMessage ||
 						`${request.lane} lane model request ${event.reason}`,
 				);
+		}
+		if (request.submit) {
+			if (!submitted)
+				throw new Error(`Model did not call ${request.submit.name}`);
+			return submitted;
 		}
 		const reply = final || text;
 		return request.json ? extractJson(reply) : reply;

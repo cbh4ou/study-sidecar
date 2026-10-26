@@ -14,6 +14,12 @@ export type LlmRequest = {
 	signal?: AbortSignal;
 	/** Upper bound on output tokens; adapters may clamp. */
 	maxTokens?: number;
+	/** One schema-validated submit tool for structured model boundaries. */
+	submit?: {
+		name: string;
+		description?: string;
+		parameters: Record<string, unknown>;
+	};
 };
 
 /**
