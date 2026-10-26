@@ -280,13 +280,13 @@ export function MentorHud({ embedded = false }: { embedded?: boolean } = {}) {
 		</div>
 	);
 	const ambient = (
-		<p className="ambient-copy">💡 {hud.insight} — press Alt+S to explore</p>
+		<p className="ambient-copy">💡 {hud.insight}, press Alt+S to explore</p>
 	);
 	const expanded = (
 		<div className="mentor-expanded">
 			{connection === "unauthorized" ? (
 				<p role="alert" className="auth-error">
-					Daemon rejected the desktop token — restart the desktop from the
+					Daemon rejected the desktop token, restart the desktop from the
 					supervisor.
 				</p>
 			) : null}
@@ -555,6 +555,7 @@ export function MentorHud({ embedded = false }: { embedded?: boolean } = {}) {
 			</PromptInput>
 		</div>
 	);
+	if (embedded) return expanded;
 	const modeIndex = ["COMPACT", "AMBIENT_PILL", "EXPANDED"].indexOf(hud.mode);
 	return (
 		<DynamicIslandProvider initialSize="compact">

@@ -77,6 +77,7 @@ export function reduceDaemonMessage(
 		case "transcript":
 			return { ...state, transcript: message.text };
 		case "fast_answer":
+			if (state.turnId && message.turnId !== state.turnId) return state;
 			return {
 				...state,
 				fastAnswer: `${state.fastAnswer ?? ""}${message.text} `,
@@ -92,6 +93,7 @@ export function reduceDaemonMessage(
 				} as TutorDocuments,
 			};
 		case "turn_settled":
+			if (state.turnId && message.turnId !== state.turnId) return state;
 			return {
 				...state,
 				pillStatus: state.fastAnswer ? "speaking" : "idle",

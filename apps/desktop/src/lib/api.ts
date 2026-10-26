@@ -49,7 +49,6 @@ export function useLiveInvalidation(): void {
 					case "lessons_changed":
 					case "question":
 						void client.invalidateQueries({ queryKey: queryKeys.lessons });
-						void client.invalidateQueries({ queryKey: ["api", "lessons"] });
 						break;
 					case "cards_due":
 						void client.invalidateQueries({ queryKey: queryKeys.dueCards });

@@ -52,6 +52,7 @@ export class VoiceClient {
 	#epoch = 0;
 	#speech: Array<{ text: string; voice?: VoiceProfile }> = [];
 	#speaking = false;
+	#speechId = "";
 	#firstAudio = false;
 	#capture: VoiceCapture;
 	#playback: VoicePlayback;
@@ -177,13 +178,15 @@ export class VoiceClient {
 		const next = this.#speech.shift();
 		if (!next) return;
 		this.#speaking = true;
-		this.#send({ type: "speak", id: crypto.randomUUID(), ...next });
+		this.#speechId = crypto.randomUUID();
+		this.#send({ type: "speak", id: this.#speechId, ...next });
 	}
 
 	interrupt(): void {
 		this.#dropAudio = true;
 		this.#speech = [];
 		this.#speaking = false;
+		this.#speechId = "";
 		this.#send({ type: "interrupt" });
 		this.#playback.stop();
 	}
@@ -194,6 +197,12 @@ export class VoiceClient {
 		this.interrupt();
 		this.#socket?.close();
 		this.#socket = undefined;
+		this.#set({
+			status: "offline",
+			detail: offlineMessage,
+			listening: false,
+			vad: false,
+		});
 		await this.#capture.stop();
 	}
 
@@ -219,11 +228,13 @@ export class VoiceClient {
 			return;
 		}
 		if (message.type === "tts_started") {
+			if (message.id !== this.#speechId) return;
 			this.#dropAudio = false;
 			this.#firstAudio = false;
 			return;
 		}
 		if (message.type === "tts_audio") {
+			if (message.id !== this.#speechId) return;
 			if (!this.#dropAudio) {
 				if (!this.#firstAudio) {
 					this.#firstAudio = true;
@@ -234,6 +245,7 @@ export class VoiceClient {
 			return;
 		}
 		if (message.type === "tts_stopped") {
+			if (message.id !== this.#speechId) return;
 			this.#speaking = false;
 			this.#nextSpeech();
 			return;

@@ -127,3 +127,107 @@ test("never sends the daemon token to the local worker port", async () => {
 	expect(client.state.status).toBe("offline");
 	expect(states.at(-1)?.detail).toContain("Voice worker offline");
 });
+
+test("closed voice client ignores stale discovery without opening a socket", async () => {
+	const discovery = Promise.withResolvers<Response>();
+	const client = new VoiceClient({
+		onState() {},
+		onTranscript() {},
+		getToken: async () => "token",
+		fetch: () => discovery.promise,
+		capture: {
+			async start() {
+				throw new Error("capture must stay closed");
+			},
+			async stop() {},
+		},
+		playback: { active: false, async enqueue() {}, stop() {} },
+	});
+	const opening = client.connect();
+	await Bun.sleep(0);
+	await client.close();
+	discovery.resolve(Response.json({ ws_url: "ws://127.0.0.1:4321/voice-ws" }));
+	await opening;
+	expect(client.state.status).toBe("offline");
+	expect(client.state.listening).toBe(false);
+});
+
+test("fake PTT bypasses microphone and speech sentences wait for prior completion", async () => {
+	const frames: Array<Record<string, unknown>> = [];
+	const ready = Promise.withResolvers<void>();
+	const first = Promise.withResolvers<void>();
+	const second = Promise.withResolvers<void>();
+	let finishFirst = () => {};
+	const server = Bun.serve({
+		port: 0,
+		fetch(request, server) {
+			if (server.upgrade(request)) return;
+			return new Response("upgrade", { status: 426 });
+		},
+		websocket: {
+			open(socket) {
+				socket.send(
+					JSON.stringify({
+						type: "ready",
+						vad: "fake",
+						tts: "fake",
+						engines: { stt: ["fake"], tts: ["fake"] },
+					}),
+				);
+			},
+			message(socket, raw) {
+				const frame = JSON.parse(String(raw));
+				frames.push(frame);
+				if (frame.type === "speak") {
+					socket.send(JSON.stringify({ type: "tts_started", id: frame.id }));
+					if (frame.text === "First sentence.") {
+						finishFirst = () =>
+							socket.send(
+								JSON.stringify({
+									type: "tts_stopped",
+									id: frame.id,
+									reason: "complete",
+								}),
+							);
+						first.resolve();
+					} else second.resolve();
+				}
+			},
+		},
+	});
+	servers.push(server);
+	let captures = 0;
+	const client = new VoiceClient({
+		daemonUrl: `http://127.0.0.1:${server.port}`,
+		getToken: async () => "token",
+		fetch: async () =>
+			Response.json({ ws_url: `ws://127.0.0.1:${server.port}/voice-ws` }),
+		onState(s) {
+			if (s.status === "ready") ready.resolve();
+		},
+		onTranscript() {},
+		capture: {
+			async start() {
+				captures++;
+			},
+			async stop() {},
+		},
+		playback: { active: false, async enqueue() {}, stop() {} },
+	});
+	await client.connect();
+	await ready.promise;
+	await client.setListening(true);
+	await client.setListening(false);
+	client.speak("First sentence.");
+	client.speak("Second sentence.");
+	await first.promise;
+	expect(captures).toBe(0);
+	expect(frames.filter((f) => f.type === "speak")).toHaveLength(1);
+	finishFirst();
+	await second.promise;
+	expect(frames.filter((f) => f.type === "speak").map((f) => f.text)).toEqual([
+		"First sentence.",
+		"Second sentence.",
+	]);
+	await client.close();
+});
