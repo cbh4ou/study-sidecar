@@ -17,6 +17,7 @@ export type VoiceEngine =
 export type VoiceEngines = { stt: string[]; tts: string[] };
 export type VoiceInput =
 	| { type: "listen_start" | "listen_stop" | "interrupt" }
+	| { type: "configure"; stt?: string; tts?: string }
 	| { type: "audio"; pcm_b16: string }
 	| { type: "speak"; id: string; text: string; voice?: VoiceProfile };
 export type VoiceEvent =
@@ -32,6 +33,7 @@ export type VoiceHandlers = {
 };
 export type VoiceBridge = {
 	available: boolean;
+	configure?(engines: { stt?: string; tts?: string }): void;
 	listenStart(): void;
 	listenStop(): void;
 	audio(pcm_b16: string): void;
@@ -45,6 +47,7 @@ export type SelectVoiceEngineOptions = {
 	cacheMs?: number;
 	/** Force the in-process fake engine. Defaults to `SIDECAR_FAKE === "1"`. */
 	fake?: boolean;
+	allowRealtime?: boolean;
 };
 
 const object = (value: unknown): Record<string, unknown> | undefined =>
@@ -137,7 +140,11 @@ export async function selectVoiceEngine(
 			return { kind: "local", wsUrl: key };
 		}
 	}
-	return process.env.OPENAI_API_KEY ? { kind: "realtime" } : { kind: "none" };
+	return (options.allowRealtime ??
+		process.env.SIDECAR_VOICE_REALTIME === "1") &&
+		process.env.OPENAI_API_KEY
+		? { kind: "realtime" }
+		: { kind: "none" };
 }
 
 /**
@@ -159,6 +166,8 @@ export function voiceEngines(engine: VoiceEngine): VoiceEngines {
 }
 
 export function realtimeRequest(input: VoiceInput): object {
+	if (input.type === "configure")
+		return { type: "session.update", session: {} };
 	if (input.type === "audio")
 		return { type: "input_audio_buffer.append", audio: input.pcm_b16 };
 	if (input.type === "speak")
@@ -337,7 +346,11 @@ export async function createVoiceBridge(
 				);
 			}
 		};
-		return socketBridge(socket, true, (input) => input);
+		return {
+			...socketBridge(socket, true, (input) => input),
+			configure: (engines) =>
+				socket.send(JSON.stringify({ type: "configure", ...engines })),
+		};
 	}
 	const key = process.env.OPENAI_API_KEY;
 	if (!key)

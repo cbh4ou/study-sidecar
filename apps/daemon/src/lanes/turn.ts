@@ -13,6 +13,7 @@ import { AbortError, type DeepLane } from "./deep.ts";
 import { runFastLane } from "./fast.ts";
 import type { BuildOptions, ContextPacket } from "./packet.ts";
 import { isQuestionIntent, route } from "./router.ts";
+import { localSource } from "./tools.ts";
 
 /**
  * One push-to-talk / typed turn (spec Section 7): route, then the fast lane
@@ -106,7 +107,15 @@ export class TurnRunner {
 				: undefined);
 		this.#pttStoppedAt = undefined;
 		if (stt !== undefined) turn.telemetry.stt_ms = stt;
-		deps.broadcast({ type: "turn_started", turnId: turn.turnId, source });
+		this.interrupt();
+		this.#current = turn;
+		const lessonId = input.lessonId ?? deps.services.learn?.activeLessonId();
+		deps.broadcast({
+			type: "turn_started",
+			turnId: turn.turnId,
+			source,
+			...(lessonId ? { lessonId } : {}),
+		});
 		deps.broadcast({
 			type: "transcript",
 			turnId: turn.turnId,
@@ -115,16 +124,24 @@ export class TurnRunner {
 		});
 		const boundPath =
 			deps.services.sessions?.bound()?.path ?? deps.boundSessionPath?.();
-		const localOnly = deps.services.privacy?.isLocalOnly(boundPath) ?? false;
 		try {
+			const lesson = lessonId
+				? await deps.services.learn?.lesson(lessonId)
+				: undefined;
+			const localOnly = !!(
+				deps.services.privacy?.isLocalOnly(boundPath) ||
+				deps.services.privacy?.isLocalOnly(lessonId) ||
+				[...(lesson?.anchors ?? []), ...(lesson?.sources ?? [])].some(
+					(source) => localSource(source, { services: deps.services }),
+				)
+			);
 			const routed = await route(input.text, deps.decide, {
 				localOnly,
 				now: () => deps.clock.now(),
 			});
+			if (turn.controller.signal.aborted) return;
 			turn.telemetry.decide_ms = routed.decideMs;
 			turn.telemetry.decide_adapter = routed.adapter;
-			const lessonId =
-				input.lessonId ?? deps.services.learn?.activeLessonId() ?? undefined;
 			if (routed.intent === "cancel") {
 				this.interrupt();
 				return;
@@ -143,10 +160,16 @@ export class TurnRunner {
 				});
 				return;
 			}
-			// A new answering turn replaces whatever was in flight.
-			this.interrupt();
-			this.#current = turn;
+
 			const excludeSession = localOnly && deps.llm.isCloud;
+			if (excludeSession) {
+				deps.broadcast({
+					type: "error",
+					message:
+						"This source is local-only. Choose a local model in Settings to ask about it.",
+				});
+				return;
+			}
 			if (routed.intent === "bridge_back") {
 				await this.#bridgeBack(turn, input.text, { lessonId, excludeSession });
 				return;

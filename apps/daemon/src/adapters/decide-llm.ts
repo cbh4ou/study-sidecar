@@ -6,6 +6,7 @@ import type {
 	Decision,
 } from "../ports/decide.ts";
 import type { LlmPort } from "../ports/llm.ts";
+import { redact } from "../tutor/redact.ts";
 
 const Reply = z.object({
 	choice: z.string(),
@@ -40,8 +41,11 @@ export class LlmDecide implements DecidePort {
 		task: DecideTask,
 		input: string,
 		options: readonly T[],
-		_opts?: DecideOptions,
+		opts?: DecideOptions,
 	): Promise<Decision<T>> {
+		if (opts?.localOnly && this.llm.isCloud)
+			throw new Error("Local-only input cannot be classified by a cloud model");
+		input = redact(input);
 		if (options.length === 0) throw new Error(`decide ${task}: no options`);
 		const started = performance.now();
 		const raw = await this.llm.complete({

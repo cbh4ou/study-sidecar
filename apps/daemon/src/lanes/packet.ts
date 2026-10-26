@@ -1,7 +1,9 @@
+import { realpath } from "node:fs/promises";
 import type { Clock } from "../ports/clock.ts";
 import type { Services } from "../services.ts";
 import { redact } from "../tutor/redact.ts";
 import { anchorSkeleton } from "./skeleton.ts";
+import { localSource } from "./tools.ts";
 
 /**
  * Context Packet builder (spec Section 8). Pure: same input, same bytes.
@@ -216,6 +218,7 @@ export function buildContextPacket(input: PacketInput): ContextPacket {
 /* ---- Warm packet: rebuilt on session events so PTT finds it ready ---- */
 
 export type PacketBase = {
+	boundPath?: string;
 	learner: string[];
 	anchors: Array<{ path: string; text: string }>;
 	receipts: string[];
@@ -297,7 +300,12 @@ export class PacketWarmer {
 		let base = this.#warming
 			? await this.#warming.catch(() => undefined)
 			: this.#base;
-		if (!base || base.lessonId !== lessonId) base = await this.warm(lessonId);
+		if (
+			!base ||
+			base.lessonId !== lessonId ||
+			base.boundPath !== services.sessions?.bound()?.path
+		)
+			base = await this.warm(lessonId);
 		let receipts = base.receipts;
 		if (opts.allSessions)
 			receipts =
@@ -335,8 +343,17 @@ export class PacketWarmer {
 				: undefined,
 		]);
 		const learner = [
-			...recent.map((p) => `${p.name}: ${p.statement}`),
-			...due.slice(0, 4).map((card) => `Due for review: ${card.question}`),
+			...recent
+				.filter(
+					(p) =>
+						!services.privacy?.isLocalOnly(p.birthSource) &&
+						!p.sources.some((source) => localSource(source, { services })),
+				)
+				.map((p) => `${p.name}: ${p.statement}`),
+			...due
+				.filter((card) => !localSource(card.source, { services }))
+				.slice(0, 4)
+				.map((card) => `Due for review: ${card.question}`),
 		];
 		const lessonLines: string[] = [];
 		const anchors: Array<{ path: string; text: string }> = [];
@@ -353,8 +370,13 @@ export class PacketWarmer {
 			for (const anchor of lesson.anchors) {
 				if (anchors.length >= MAX_ANCHORS) break;
 				if (anchor.kind !== "file") continue;
+				if (services.privacy?.isLocalOnly(anchor.path)) continue;
 				try {
-					anchors.push({ path: anchor.path, text: await read(anchor.path) });
+					const actual = this.options.readFile
+						? anchor.path
+						: await realpath(anchor.path).catch(() => anchor.path);
+					if (services.privacy?.isLocalOnly(actual)) continue;
+					anchors.push({ path: actual, text: await read(actual) });
 				} catch {
 					/* unreadable anchor: skip */
 				}
@@ -362,6 +384,7 @@ export class PacketWarmer {
 		}
 		const receipts = services.sessions?.receipts(undefined, 12) ?? [];
 		return {
+			boundPath: services.sessions?.bound()?.path,
 			learner,
 			anchors,
 			receipts,

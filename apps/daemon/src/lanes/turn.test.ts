@@ -442,7 +442,7 @@ describe("lanes feature turn orchestration", () => {
 		);
 	});
 
-	test("needs_web registers a research job; fake deep lane emits diagram, quiz, card", async () => {
+	test("needs_web registers a research job; fake deep emits diagram and quiz without creating orphan cards", async () => {
 		const learn = stubLearn();
 		const h = harness({
 			llm: fakeLlm(["Fake answer."]),
@@ -466,7 +466,7 @@ describe("lanes feature turn orchestration", () => {
 				quiz.question.kind === "quiz" &&
 				quiz.question.options,
 		).toHaveLength(3);
-		expect(learn.cards).toBe(1);
+		expect(learn.cards).toBe(0);
 		void FakeDeepLane;
 	});
 });

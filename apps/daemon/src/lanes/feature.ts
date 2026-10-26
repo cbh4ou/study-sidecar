@@ -102,6 +102,17 @@ export function createLanesFeature(
 				case "interrupt":
 					runner.interrupt();
 					return true;
+				case "answer": {
+					const id = services.learn?.activeLessonId();
+					if (!context.fake && id)
+						void runner.question({
+							type: "question",
+							source: "typed",
+							lessonId: id,
+							text: "Continue the lesson after my latest answer. Assess the reasoning before moving on, then ask the next prerequisite probe or teach one concept.",
+						});
+					return false;
+				}
 				case "question":
 					// Do not block the socket loop: the turn streams on its own.
 					void runner.question(message);
