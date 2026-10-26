@@ -328,6 +328,7 @@ export function launchChildren(
 			env: {
 				SIDECAR_TOKEN: token,
 				SIDECAR_VOICE_TOKEN: voiceToken,
+				BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
 			},
 		},
 	];
@@ -379,9 +380,7 @@ async function main(): Promise<void> {
 	}
 	if (command === "mcp") {
 		// In-process stdio server: stdout belongs to the MCP transport.
-		const { main: mcpMain } = await import(
-			"../apps/daemon/src/mcp/server.ts"
-		);
+		const { main: mcpMain } = await import("../apps/daemon/src/mcp/server.ts");
 		await mcpMain();
 		return;
 	}

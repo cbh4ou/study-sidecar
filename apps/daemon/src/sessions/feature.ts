@@ -19,7 +19,9 @@ export const REFRESH_MS = 5_000;
 
 /** Optional LearnService extensions, duck-typed so learn/ may omit them. */
 type LearnExtras = {
-	recentNotes?(limit?: number): Promise<
+	recentNotes?(
+		limit?: number,
+	): Promise<
 		Array<{ concept: string; why?: string; at: string; source?: SourceRef }>
 	>;
 	listLessons?(): Promise<Lesson[]>;
@@ -42,7 +44,7 @@ function refMatches(
 	path: string,
 	meta: SessionMeta | undefined,
 ): boolean {
-	if (!ref || ref.kind !== "session") return false;
+	if (ref?.kind !== "session") return false;
 	if (ref.file) return ref.file === path;
 	return Boolean(meta?.sessionId) && ref.sessionId === meta?.sessionId;
 }
@@ -60,7 +62,11 @@ export function acrossSessions(
 			if (key) sessions.add(key);
 		}
 		if (sessions.size >= 2)
-			out.push({ id: node.id, name: node.name, sessions: [...sessions].sort() });
+			out.push({
+				id: node.id,
+				name: node.name,
+				sessions: [...sessions].sort(),
+			});
 	}
 	return out;
 }
@@ -210,11 +216,16 @@ export function createSessionsFeature(
 		onConnect(send) {
 			const path = registry.boundPath;
 			if (path)
-				send({ type: "bound_session", sessionPath: path, follow: registry.follow });
+				send({
+					type: "bound_session",
+					sessionPath: path,
+					follow: registry.follow,
+				});
 		},
 		async onClientMessage(message) {
 			if (message.type !== "bind_session") return false;
 			await registry.bind(message.sessionPath);
+			await context.settings.update({ follow: registry.follow });
 			announceBound();
 			context.broadcast({ type: "sessions_changed" });
 			return true;

@@ -226,21 +226,24 @@ test("up --fake passes --fake and an isolated SIDECAR_HOME to every child", () =
 		expect(child.env?.SIDECAR_FAKE).toBe("1");
 		expect(child.env?.SIDECAR_HOME).toBe("/tmp/fake-home");
 	}
-	expect(launchChildren("auto", 4321, "d", "v", false, false)[0]?.command).not.toContain(
-		"--fake",
-	);
+	expect(
+		launchChildren("auto", 4321, "d", "v", false, false)[0]?.command,
+	).not.toContain("--fake");
 	expect(fakeEnv().SIDECAR_HOME).toBe(FAKE_HOME);
 	expect(FAKE_HOME.endsWith(join(".run", "fake-home"))).toBe(true);
 });
 
 test("mcp subcommand serves the study-sidecar tools over stdio", async () => {
-	const child = Bun.spawn([bunPath, join(import.meta.dir, "sidecar.ts"), "mcp"], {
-		cwd: root,
-		stdin: "pipe",
-		stdout: "pipe",
-		stderr: "ignore",
-		env: { ...process.env, SIDECAR_TOKEN: "unused", SIDECAR_PORT: "1" },
-	});
+	const child = Bun.spawn(
+		[bunPath, join(import.meta.dir, "sidecar.ts"), "mcp"],
+		{
+			cwd: root,
+			stdin: "pipe",
+			stdout: "pipe",
+			stderr: "ignore",
+			env: { ...process.env, SIDECAR_TOKEN: "unused", SIDECAR_PORT: "1" },
+		},
+	);
 	const send = (message: object) =>
 		child.stdin.write(`${JSON.stringify(message)}\n`);
 	send({
@@ -271,7 +274,8 @@ test("mcp subcommand serves the study-sidecar tools over stdio", async () => {
 				buffer = buffer.slice(newline + 1);
 				if (line) {
 					const message = JSON.parse(line);
-					if (typeof message.id === "number") responses.set(message.id, message);
+					if (typeof message.id === "number")
+						responses.set(message.id, message);
 				}
 				newline = buffer.indexOf("\n");
 			}
@@ -280,8 +284,13 @@ test("mcp subcommand serves the study-sidecar tools over stdio", async () => {
 		child.kill();
 		await child.exited;
 	}
-	const tools = (responses.get(2)?.result?.tools ?? []) as Array<{ name: string }>;
-	expect(tools.map(({ name }) => name).sort()).toEqual(["tutor_ask", "tutor_note"]);
+	const tools = (responses.get(2)?.result?.tools ?? []) as Array<{
+		name: string;
+	}>;
+	expect(tools.map(({ name }) => name).sort()).toEqual([
+		"tutor_ask",
+		"tutor_note",
+	]);
 	const prompts = (responses.get(3)?.result?.prompts ?? []) as Array<{
 		name: string;
 	}>;

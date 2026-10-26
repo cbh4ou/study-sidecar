@@ -1,7 +1,10 @@
 import { open } from "node:fs/promises";
 import { basename } from "node:path";
 import type { SessionEvent, SessionInfo } from "../ingest/events.ts";
-import { normalizeClaudeRecord, normalizeCodexRecord } from "../ingest/harness.ts";
+import {
+	normalizeClaudeRecord,
+	normalizeCodexRecord,
+} from "../ingest/harness.ts";
 import {
 	type Candidate,
 	type Harness,
@@ -242,11 +245,9 @@ export class SessionRegistry implements SessionsService {
 	}
 
 	#harness(path: string): ConcreteHarness {
-		return (
-			this.#entries.get(path)?.harness ??
+		return (this.#entries.get(path)?.harness ??
 			harnessForPath(this.options.directories, path) ??
-			"pi"
-		) as ConcreteHarness;
+			"pi") as ConcreteHarness;
 	}
 
 	/** Rescan harness dirs, refresh metadata, prefetch tails, follow-rebind. */
@@ -272,10 +273,12 @@ export class SessionRegistry implements SessionsService {
 			const privacy = this.#privacy() as
 				| (PrivacyGate & { linkSessionCwd?(path: string, cwd: string): void })
 				| undefined;
-			if (entry.meta?.cwd) privacy?.linkSessionCwd?.(candidate.path, entry.meta.cwd);
+			if (entry.meta?.cwd)
+				privacy?.linkSessionCwd?.(candidate.path, entry.meta.cwd);
 		}
 		for (const path of this.#entries.keys())
-			if (!seen.has(path)) this.#entries.delete(path);
+			if (!seen.has(path) && !path.startsWith("fake/"))
+				this.#entries.delete(path);
 		await this.#prefetch();
 		return { rebound: await this.#followTick() };
 	}
@@ -321,6 +324,8 @@ export class SessionRegistry implements SessionsService {
 			else if (!newest) await this.options.ingest.resumeAuto();
 			return;
 		}
+		if (!this.#entries.has(sessionPath))
+			throw new Error("Unknown watched session");
 		this.#follow = false;
 		await this.options.ingest.bind(sessionPath, this.#harness(sessionPath));
 	}
@@ -329,6 +334,13 @@ export class SessionRegistry implements SessionsService {
 	observe(event: SessionEvent): void {
 		const path = event.session_file ?? this.boundPath;
 		if (!path) return;
+		if (path.startsWith("fake/"))
+			this.#entries.set(path, {
+				path,
+				harness: "pi",
+				modified: this.options.clock.now(),
+				meta: { sessionId: "fake", project: "Order consumer" },
+			});
 		const list = this.#receipts.get(path) ?? [];
 		list.push(toReceipt(event));
 		if (list.length > RECEIPT_HISTORY)
@@ -337,8 +349,18 @@ export class SessionRegistry implements SessionsService {
 	}
 
 	/** An MCP tutor_note for the bound session. */
-	recordNote(note: { concept: string; why?: string }, path = this.boundPath): void {
+	recordNote(
+		note: { concept: string; why?: string },
+		path = this.boundPath,
+	): void {
 		if (!path) return;
+		if (path.startsWith("fake/"))
+			this.#entries.set(path, {
+				path,
+				harness: "pi",
+				modified: this.options.clock.now(),
+				meta: { sessionId: "fake", project: "Order consumer" },
+			});
 		const list = this.#notes.get(path) ?? [];
 		list.push({
 			concept: note.concept,
@@ -383,7 +405,10 @@ export class SessionRegistry implements SessionsService {
 	}
 
 	/** Receipt history, tail-reading the file when nothing was observed yet. */
-	async receiptHistory(path: string, limit = RECEIPT_HISTORY): Promise<Receipt[]> {
+	async receiptHistory(
+		path: string,
+		limit = RECEIPT_HISTORY,
+	): Promise<Receipt[]> {
 		if (!this.#receipts.has(path) && this.#entries.has(path))
 			await this.#loadTail(path);
 		return (this.#receipts.get(path) ?? []).slice(-limit);

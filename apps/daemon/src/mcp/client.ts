@@ -2,7 +2,13 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 /** Repo root: apps/daemon/src/mcp -> four levels up. */
-export const REPO_ROOT = join(dirname(import.meta.path), "..", "..", "..", "..");
+export const REPO_ROOT = join(
+	dirname(import.meta.path),
+	"..",
+	"..",
+	"..",
+	"..",
+);
 export const TOKEN_PATH = join(REPO_ROOT, ".run", "token");
 
 /** Minimal HTTP client the MCP tools use; tests inject a fake. */

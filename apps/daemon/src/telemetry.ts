@@ -7,12 +7,28 @@ export const TELEMETRY_MAX = 50;
 /** Per-turn timings ring buffer (newest last). Logged, never gated on. */
 export class Telemetry implements TelemetryRecorder {
 	#entries: TelemetryEntry[] = [];
+	#audio = new Map<string, number>();
+	audio(turnId: string, ms: number): TelemetryEntry | undefined {
+		const entry = this.#entries.find((entry) => entry.turnId === turnId);
+		if (entry) {
+			entry.tts_first_audio_ms = ms;
+			return { ...entry };
+		}
+		this.#audio.set(turnId, ms);
+		if (this.#audio.size > this.max)
+			this.#audio.delete(this.#audio.keys().next().value ?? "");
+	}
 	constructor(
 		private readonly max = TELEMETRY_MAX,
 		private readonly now: () => number = Date.now,
 	) {}
 
 	record(turnId: string, telemetry: TurnTelemetry): void {
+		const audio = this.#audio.get(turnId);
+		if (audio !== undefined) {
+			telemetry.tts_first_audio_ms = audio;
+			this.#audio.delete(turnId);
+		}
 		const existing = this.#entries.findIndex(
 			(entry) => entry.turnId === turnId,
 		);
@@ -36,6 +52,17 @@ export function createTelemetryFeature(context: DaemonContext): Feature {
 	context.services.telemetry = telemetry;
 	return {
 		name: "telemetry",
+		onClientMessage(message) {
+			if (message.type !== "turn_telemetry") return false;
+			const entry = telemetry.audio(message.turnId, message.tts_first_audio_ms);
+			if (entry)
+				context.broadcast({
+					type: "turn_settled",
+					turnId: message.turnId,
+					telemetry: entry,
+				});
+			return true;
+		},
 		route(request, url, cors) {
 			if (url.pathname !== "/api/telemetry") return undefined;
 			if (request.method !== "GET")

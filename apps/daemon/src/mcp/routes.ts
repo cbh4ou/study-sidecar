@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { type DaemonContext, type Feature, json, readBody } from "../feature.ts";
+import {
+	type DaemonContext,
+	type Feature,
+	json,
+	readBody,
+} from "../feature.ts";
 import type { SourceRef } from "../protocol.ts";
 
 const FIELD_CAP = 2_000;
@@ -29,7 +34,8 @@ const cap = (text: string, limit = FIELD_CAP) =>
 /** One question text: the agent's question plus labeled, capped context. */
 export function composeQuestion(input: z.infer<typeof AskBody>): string {
 	const parts = [cap(input.question.trim())];
-	if (input.topic_hint?.trim()) parts.push(`Topic: ${cap(input.topic_hint, 200)}`);
+	if (input.topic_hint?.trim())
+		parts.push(`Topic: ${cap(input.topic_hint, 200)}`);
 	const files = input.context?.files?.filter((file) => file.trim()) ?? [];
 	if (files.length) {
 		const shown = files.slice(0, FILES_CAP).join(", ");
@@ -40,7 +46,9 @@ export function composeQuestion(input: z.infer<typeof AskBody>): string {
 	if (input.context?.diff_summary?.trim())
 		parts.push(`Diff summary: ${cap(input.context.diff_summary.trim())}`);
 	if (input.context?.what_agent_did?.trim())
-		parts.push(`What the agent did: ${cap(input.context.what_agent_did.trim())}`);
+		parts.push(
+			`What the agent did: ${cap(input.context.what_agent_did.trim())}`,
+		);
 	return parts.join("\n\n");
 }
 
@@ -77,7 +85,8 @@ type NoteRecorder = {
 /** `/api/mcp/ask` and `/api/mcp/note`: the daemon side of the MCP server. */
 export function createMcpRoutesFeature(
 	context: DaemonContext,
-	ticket: () => string = () => `t_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`,
+	ticket: () => string = () =>
+		`t_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`,
 ): Feature {
 	return {
 		name: "mcp",

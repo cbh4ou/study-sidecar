@@ -17,6 +17,9 @@ import {
 	IngestManager,
 	sessionDirectories,
 } from "./ingest/manager.ts";
+import { createDeepTools } from "./lanes/tools.ts";
+import type { Learn } from "./learn/service.ts";
+import { learnTools } from "./learn/tools.ts";
 import { OKFStore } from "./memory/okf-store.ts";
 import { loadModes } from "./modes/modes.ts";
 import { sidecarHome } from "./paths.ts";
@@ -80,7 +83,11 @@ let documents: TutorDocuments | undefined;
 let watched = "";
 const modes = await loadModes();
 const fallbackMode = [...modes.values()][0];
-const mode = modes.get("spotter") ?? modes.get("co-pilot") ?? fallbackMode;
+const mode =
+	modes.get("socratic") ??
+	modes.get("spotter") ??
+	modes.get("co-pilot") ??
+	fallbackMode;
 if (
 	!mode ||
 	!directories[harness] ||
@@ -103,7 +110,26 @@ const tutor = new TutorEngine(
 		if (message.type === "tutor_documents") documents = message.documents;
 		broadcast(message);
 	},
-	{ deadAirSeconds, modelSlug: modelSlug ?? "" },
+	{
+		deadAirSeconds,
+		modelSlug: settings.value.lanes.deep ?? modelSlug ?? "",
+		extraTools: () => [
+			...(context.services.learn
+				? learnTools(context.services.learn as Learn)
+				: []),
+			...createDeepTools(context),
+		],
+		allowCloud: (path) =>
+			!fake &&
+			(context.services.privacy?.allowCloud(
+				path ?? context.services.sessions?.bound()?.path ?? watched,
+			) ??
+				false),
+		sourceScope: () =>
+			context.services.learn?.activeLessonId() ??
+			context.services.sessions?.bound()?.path ??
+			watched,
+	},
 );
 const activity = new ActivityRegistry((jobs) =>
 	broadcast({ type: "activity", jobs }),
@@ -127,10 +153,52 @@ const context: DaemonContext = {
 	events: () => events,
 	session: () => session,
 	watchedPath: () => watched,
-	ingestEvent: (event) => addEvent(event),
+	ingestEvent: (event) => {
+		if (fake && !watched) {
+			watched = event.session_file ?? "fake/session.jsonl";
+			setSession({ id: "fake", project_name: "Order consumer" });
+		}
+		addEvent(event);
+	},
 	dispatch: (message) => dispatchClientMessage(message),
 };
-const features: Feature[] = createFeatures(context);
+const ingest = new IngestManager(
+	{
+		onEvent: addEvent,
+		onSession: setSession,
+		broadcast,
+		reset: () => {
+			events.length = 0;
+			session = undefined;
+			tutor.reset();
+		},
+		watched: (path) => {
+			watched = path;
+		},
+		hydrate: (value) => {
+			tutor.hydrating = value;
+		},
+	},
+	{ harness, directories, durableUrl: process.env.DURABLE_URL },
+);
+const features: Feature[] = createFeatures(
+	context,
+	fake
+		? {
+				get watchedPath() {
+					return watched;
+				},
+				async bind(path) {
+					watched = path;
+					setSession({ id: "fake", project_name: "Order consumer" });
+				},
+				async resumeAuto() {},
+			}
+		: ingest,
+);
+settings.onChange((value) => {
+	void tutor.setModel(value.lanes.deep ?? modelSlug ?? "");
+});
 async function dispatchClientMessage(message: ClientMessage): Promise<boolean> {
 	let handled = false;
 	if (message.type === "abort_job") {
@@ -154,7 +222,8 @@ function addEvent(event: SessionEvent): void {
 	events.push(event);
 	if (events.length > 100) events.shift();
 	broadcast({ type: "new_event", event });
-	tutor.observe(event);
+	if (!fake && context.services.privacy?.allowCloud(watched))
+		tutor.observe(event);
 	for (const feature of features) {
 		try {
 			feature.onEvent?.(event);
@@ -181,6 +250,14 @@ const json = (
 	headers: Record<string, string> = {},
 	status = 200,
 ) => Response.json(data, { status, headers });
+
+for (const feature of features) {
+	try {
+		await feature.start?.();
+	} catch (error) {
+		console.error(`feature ${feature.name} failed to start:`, error);
+	}
+}
 
 const server = Bun.serve<SocketData>({
 	port,
@@ -259,7 +336,12 @@ const server = Bun.serve<SocketData>({
 			return json({ prompt: tutor.latestSteering }, cors);
 		}
 		if (url.pathname === "/voice") {
-			voiceEngine = await selectVoiceEngine(voiceToken, { fake });
+			voiceEngine = await selectVoiceEngine(voiceToken, {
+				fake,
+				allowRealtime:
+					settings.value.voice.stt === "openai-realtime" &&
+					context.services.privacy?.allowCloud(watched) === true,
+			});
 			return json(
 				{
 					kind: voiceEngine.kind,
@@ -446,6 +528,11 @@ const server = Bun.serve<SocketData>({
 									})
 								: undefined,
 						);
+					else if (frame.type === "configure")
+						bridge.configure?.({
+							stt: typeof frame.stt === "string" ? frame.stt : undefined,
+							tts: typeof frame.tts === "string" ? frame.tts : undefined,
+						});
 					else if (frame.type === "interrupt") bridge.interrupt();
 				} catch {
 					// malformed voice frames never touch daemon state
@@ -506,38 +593,13 @@ const server = Bun.serve<SocketData>({
 });
 console.log(`daemon listening on http://127.0.0.1:${server.port}`);
 
-const ingest = new IngestManager(
-	{
-		onEvent: addEvent,
-		onSession: setSession,
-		broadcast,
-		reset: () => {
-			events.length = 0;
-			session = undefined;
-			tutor.reset();
-		},
-		watched: (path) => {
-			watched = path;
-		},
-		hydrate: (value) => {
-			tutor.hydrating = value;
-		},
-	},
-	{ harness, directories, durableUrl: process.env.DURABLE_URL },
-);
-ingest.start();
-for (const feature of features) {
-	try {
-		await feature.start?.();
-	} catch (error) {
-		console.error(`feature ${feature.name} failed to start:`, error);
-	}
-}
+if (!fake) ingest.start();
 
 // Close the durable harness on shutdown: a SIGKILL mid-commit is what leaves
 // an unresumable task that replays duplicate entry IDs on the next open.
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
 	process.once(signal, () => {
+		ingest.stop();
 		const stop = () => process.exit(0);
 		void Promise.allSettled(features.map((feature) => feature.stop?.()))
 			.then(() => tutor.close())
