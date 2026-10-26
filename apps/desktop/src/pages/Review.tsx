@@ -8,8 +8,10 @@ import { sourceLabel } from "./Classroom";
 export function ReviewCard({
 	card,
 	onGrade,
+	compact = false,
 }: {
 	card: Card;
+	compact?: boolean;
 	onGrade?: (rating: string) => void;
 }) {
 	const { send } = useHudMessages();
@@ -35,21 +37,23 @@ export function ReviewCard({
 		return () => setTranscriptTarget(undefined);
 	}, [setTranscriptTarget, voiceGrade]);
 	return (
-		<article className="review-card">
+		<article className={`review-card ${compact ? "compact-review" : ""}`}>
 			<h2>{card.question}</h2>
-			{card.example && (
+			{!compact && card.example && (
 				<details>
 					<summary>Show your example</summary>
 					<pre>{card.example}</pre>
 				</details>
 			)}
-			<p>Source: {sourceLabel(card.source)}</p>
-			<p>Recall your answer, then choose how it felt.</p>
-			<DictationBar
-				onSubmit={voiceGrade}
-				placeholder="Recall aloud or say a grade"
-				disabled={graded}
-			/>
+			{!compact && <p>Source: {sourceLabel(card.source)}</p>}
+			{!compact && <p>Recall your answer, then choose how it felt.</p>}
+			{!compact && (
+				<DictationBar
+					onSubmit={voiceGrade}
+					placeholder="Recall aloud or say a grade"
+					disabled={graded}
+				/>
+			)}
 			<div className="grade-buttons">
 				{(["again", "hard", "good", "easy"] as const).map((r) => (
 					<button

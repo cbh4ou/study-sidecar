@@ -81,7 +81,7 @@ export function PillStates({
 					Thinking
 				</p>
 			)}
-			{state.fastAnswer && !voice.listening && (
+			{state.fastAnswer && !voice.listening && !card && !anchor && (
 				<div className="pill-answer">
 					<p>{state.fastAnswer}</p>
 					{state.deepReady && (
@@ -116,6 +116,7 @@ export function PillStates({
 				<ReviewCard
 					key={card.id}
 					card={card}
+					compact
 					onGrade={() => setDismissed(card.id)}
 				/>
 			)}

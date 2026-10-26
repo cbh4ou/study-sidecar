@@ -104,7 +104,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
 			}
 			if (
 				message.type === "fast_answer" &&
-				message.text !== "Noted." &&
+				!("speak" in message && message.speak === false) &&
 				!(
 					"__TAURI_INTERNALS__" in window &&
 					new URLSearchParams(location.search).get("window") === "main"
@@ -129,6 +129,10 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
 	}, [send]);
 	useEffect(() => {
 		if ("__TAURI_INTERNALS__" in window) {
+			const escapeKey = (event: KeyboardEvent) => {
+				if (event.key === "Escape") interrupt();
+			};
+			window.addEventListener("keydown", escapeKey);
 			let gone = false;
 			const stops: Array<() => void> = [];
 			for (const [event, callback] of [
@@ -142,6 +146,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
 				});
 			return () => {
 				gone = true;
+				window.removeEventListener("keydown", escapeKey);
 				for (const stop of stops) stop();
 			};
 		}
@@ -153,6 +158,25 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
 			settings?.hotkeys.ptt ?? "Alt+Space",
 		);
 	}, [startPtt, stopPtt, interrupt, settings?.hotkeys.ptt]);
+	useEffect(() => {
+		if (
+			held.current ||
+			voice.status !== "ready" ||
+			("__TAURI_INTERNALS__" in window &&
+				new URLSearchParams(location.search).get("window") === "main")
+		)
+			return;
+		const listening = settings?.voice.mode === "vad";
+		if (client.current && client.current.state.listening !== listening)
+			void client.current.setListening(listening);
+	}, [voice.status, settings?.voice.mode]);
+	useEffect(() => {
+		if (voice.status === "ready")
+			client.current?.configure({
+				stt: settings?.voice.stt,
+				tts: settings?.voice.tts,
+			});
+	}, [voice.status, settings?.voice.stt, settings?.voice.tts]);
 	const toggleListening = () => {
 		const next = client.current;
 		if (next) void next.setListening(!next.state.listening);

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { MentorHud } from "../components/MentorHud";
 import { PillStates } from "../components/PillStates";
 import { useLiveInvalidation, useSettings } from "../lib/api";
@@ -14,11 +14,11 @@ export function PillApp() {
 	const [picker, setPicker] = useState(false);
 	const [dnd, setDnd] = useState(false);
 	const native = "__TAURI_INTERNALS__" in window || "__TAURI__" in window;
-	const open = () => {
+	const open = useCallback(() => {
 		const path = state.lessonId ? `/classroom/${state.lessonId}` : "/classroom";
 		if (native) void invoke("open_main", { path }).catch(() => undefined);
 		else window.open(path, "study-sidecar-main");
-	};
+	}, [native, state.lessonId]);
 	useEffect(() => {
 		if (native)
 			void invoke("set_hud_variant", {
@@ -39,6 +39,7 @@ export function PillApp() {
 		const stops: Array<() => void> = [];
 		for (const [name, callback] of [
 			["hud://expand", () => setExpanded((v) => !v)],
+			["hud://open", open],
 			[
 				"hud://dnd",
 				() =>
@@ -57,7 +58,7 @@ export function PillApp() {
 			disposed = true;
 			for (const stop of stops) stop();
 		};
-	}, [native, send]);
+	}, [native, send, open]);
 	useEffect(() => {
 		if (native) return;
 		const handler = (event: KeyboardEvent) => {

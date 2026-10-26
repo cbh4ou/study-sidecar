@@ -88,19 +88,26 @@ fn configure_shortcuts(app: AppHandle, hotkeys: HashMap<String, String>) -> Resu
         .unregister_all()
         .map_err(|e| e.to_string())?;
     for (action, shortcut) in parsed {
+        let ptt_target = std::sync::Mutex::new(None::<String>);
         app.global_shortcut()
             .on_shortcut(shortcut, move |app, _, event| {
                 let pressed = event.state() == ShortcutState::Pressed;
                 if action == "ptt" {
-                    let _ = app.emit_to(
-                        "pill",
+                    if let Ok(mut target) = ptt_target.lock() {
                         if pressed {
-                            "voice://ptt-start"
-                        } else {
-                            "voice://ptt-stop"
-                        },
-                        (),
-                    );
+                            if target.is_none() {
+                                let main_focused = app
+                                    .get_webview_window("main")
+                                    .and_then(|w| w.is_focused().ok())
+                                    .unwrap_or(false);
+                                let label = if main_focused { "main" } else { "pill" };
+                                *target = Some(label.to_string());
+                                let _ = app.emit_to(label, "voice://ptt-start", ());
+                            }
+                        } else if let Some(label) = target.take() {
+                            let _ = app.emit_to(label, "voice://ptt-stop", ());
+                        }
+                    }
                     return;
                 }
                 if !pressed {
@@ -108,7 +115,7 @@ fn configure_shortcuts(app: AppHandle, hotkeys: HashMap<String, String>) -> Resu
                 }
                 match action.as_str() {
                     "open" => {
-                        let _ = open_main(app.clone(), None);
+                        let _ = app.emit_to("pill", "hud://open", ());
                     }
                     "expand" => {
                         let _ = app.emit_to("pill", "hud://expand", ());

@@ -149,7 +149,7 @@ export class VoiceClient {
 				return;
 			}
 			this.#send({ type: "listen_start" });
-			this.#set({ listening: true });
+			this.#set({ listening: true, transcript: "" });
 		} catch {
 			this.#wantListening = false;
 			this.#set({

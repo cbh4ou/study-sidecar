@@ -45,6 +45,15 @@ export type DesktopState = {
 	documents?: TutorDocuments;
 };
 
+const emptyTutorDocuments: TutorDocuments = {
+	hud_state: { status: "idle", mode: "socratic", message: "" },
+	scratchpad_diagram: { diagram: "" },
+	socratic_quiz: { question: "", options: [] },
+	steering_prompt: { prompt: "" },
+	research_scratchpad: { name: "", content: "" },
+	tutor_trace: [],
+};
+
 export const initialDesktopState: DesktopState = {
 	events: [],
 	insights: [],
@@ -88,6 +97,7 @@ export function reduceDaemonMessage(
 				...state,
 				deepReady: true,
 				documents: {
+					...emptyTutorDocuments,
 					...state.documents,
 					...message.documents,
 				} as TutorDocuments,

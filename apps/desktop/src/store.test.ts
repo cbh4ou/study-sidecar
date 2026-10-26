@@ -110,3 +110,24 @@ describe("desktop message store", () => {
 		]);
 	});
 });
+
+test("deep lane initializes complete panel documents before opening expanded pill", () => {
+	const state = reduceDaemonMessage(initialDesktopState, {
+		type: "deep_update",
+		turnId: "turn",
+		documents: { scratchpad_diagram: { diagram: "flowchart TD\nA-->B" } },
+	});
+	expect(state.documents?.steering_prompt.prompt).toBe("");
+	expect(state.documents?.socratic_quiz.options).toEqual([]);
+	expect(state.documents?.research_scratchpad.content).toBe("");
+	expect(state.documents?.scratchpad_diagram.diagram).toContain("A-->B");
+	const next = reduceDaemonMessage(state, {
+		type: "deep_update",
+		turnId: "research",
+		documents: {
+			research_scratchpad: { name: "Sources", content: "A cited result" },
+		},
+	});
+	expect(next.documents?.scratchpad_diagram.diagram).toContain("A-->B");
+	expect(next.documents?.research_scratchpad.content).toBe("A cited result");
+});

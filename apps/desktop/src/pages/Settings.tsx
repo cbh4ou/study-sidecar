@@ -12,8 +12,33 @@ export function Settings() {
 	const { voice, toggleMute, toggleListening, configure } = useVoice();
 	const [webKey, setWebKey] = useState("");
 	const [jevKey, setJevKey] = useState("");
+	const [shortcutError, setShortcutError] = useState("");
 	if (error) return <p role="alert">{error.message}</p>;
 	if (!settings) return <p>Loading settings…</p>;
+	const saveHotkey = async (action: string, key: string) => {
+		if (key === settings.hotkeys[action]) return;
+		const next = { ...settings.hotkeys, [action]: key };
+		if (
+			Object.values(next).some((value) => !value.trim()) ||
+			new Set(Object.values(next).map((value) => value.toLowerCase())).size !==
+				Object.keys(next).length
+		) {
+			setShortcutError("Shortcuts must be nonempty and unique.");
+			return;
+		}
+		try {
+			if ("__TAURI_INTERNALS__" in window)
+				await invoke("configure_shortcuts", { hotkeys: next });
+			await update.mutateAsync({ hotkeys: { [action]: key } });
+			setShortcutError("");
+		} catch (error) {
+			setShortcutError(error instanceof Error ? error.message : String(error));
+			if ("__TAURI_INTERNALS__" in window)
+				void invoke("configure_shortcuts", { hotkeys: settings.hotkeys }).catch(
+					() => undefined,
+				);
+		}
+	};
 	return (
 		<section className="settings-page">
 			<header className="page-heading">
@@ -196,26 +221,21 @@ export function Settings() {
 				<legend>Keyboard shortcuts</legend>
 				{Object.entries(settings.hotkeys).map(([action, key]) => (
 					<label key={`${action}-${key}`}>
-						{action}
+						{{
+							ptt: "Push to talk",
+							expand: "Expand pill",
+							open: "Open app",
+							copy: "Copy steering prompt",
+							dnd: "Do Not Disturb",
+							pin: "Pin anchor",
+						}[action] ?? action}
 						<input
 							defaultValue={key}
-							onBlur={(e) => {
-								if (e.target.value !== key)
-									update.mutate(
-										{ hotkeys: { [action]: e.target.value } },
-										{
-											onSuccess: (next) => {
-												if ("__TAURI_INTERNALS__" in window)
-													void invoke("configure_shortcuts", {
-														hotkeys: next.hotkeys,
-													}).catch(() => undefined);
-											},
-										},
-									);
-							}}
+							onBlur={(event) => void saveHotkey(action, event.target.value)}
 						/>
 					</label>
 				))}
+				{shortcutError && <p role="alert">{shortcutError}</p>}
 			</fieldset>
 			<fieldset>
 				<legend>Privacy and binding</legend>
