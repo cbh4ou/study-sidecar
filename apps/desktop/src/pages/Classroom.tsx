@@ -6,7 +6,7 @@ import { DictationBar } from "../components/DictationBar";
 import { InlineChart, parseChart } from "../components/InlineChart";
 import { PlanPanel } from "../components/PlanPanel";
 import { QuestionDock } from "../components/QuestionDock";
-import { MermaidView } from "../components/ui/mermaid-view";
+import { StudyDiagram } from "../components/StudyDiagram";
 import { useAddLessonSource, useGraph, useLesson } from "../lib/api";
 import type { SourceRef } from "../lib/protocol";
 import { daemonRequest, useHudMessages } from "../lib/ws";
@@ -189,7 +189,7 @@ export function Classroom({ lessonId }: { lessonId: string }) {
 							</article>
 						))}
 						{state.documents?.scratchpad_diagram?.diagram && (
-							<MermaidView
+							<StudyDiagram
 								diagram={state.documents.scratchpad_diagram.diagram}
 							/>
 						)}

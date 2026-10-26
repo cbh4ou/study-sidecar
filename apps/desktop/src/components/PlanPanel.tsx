@@ -1,5 +1,5 @@
 import type { LessonDetail } from "../lib/protocol";
-import { MermaidView } from "./ui/mermaid-view";
+import { StudyDiagram } from "./StudyDiagram";
 export function PlanPanel({
 	lesson,
 	contributions,
@@ -11,7 +11,7 @@ export function PlanPanel({
 		<aside className="plan-panel">
 			<h2>Plan</h2>
 			{lesson.planMermaid ? (
-				<MermaidView diagram={lesson.planMermaid} />
+				<StudyDiagram diagram={lesson.planMermaid} />
 			) : (
 				<p>The plan follows your prerequisite checks.</p>
 			)}
