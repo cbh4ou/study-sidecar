@@ -28,7 +28,7 @@ export async function writePrivateFile(
 	content: string,
 ): Promise<void> {
 	await ensurePrivateDir(dirname(path));
-	const temp = `${path}.${process.pid}.${Date.now()}.tmp`;
+	const temp = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
 	await writeFile(temp, content, { mode: 0o600 });
 	await rename(temp, path);
 	await chmod(path, 0o600).catch(() => undefined);

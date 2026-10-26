@@ -8,6 +8,12 @@ const model = z.string().min(1).max(200);
 /** POST /api/settings body: a SettingsPatch plus write-only secrets. */
 export const SettingsPatchSchema = z
 	.object({
+		hotkeys: z
+			.partialRecord(
+				z.enum(["ptt", "expand", "open", "copy", "dnd", "pin"]),
+				z.string().min(1).max(80),
+			)
+			.optional(),
 		lanes: z
 			.object({ fast: model.optional(), deep: model.optional() })
 			.strict()

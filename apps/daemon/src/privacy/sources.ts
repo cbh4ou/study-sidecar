@@ -1,6 +1,12 @@
-import { join } from "node:path";
+import { realpathSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { z } from "zod";
-import { type DaemonContext, type Feature, json, readBody } from "../feature.ts";
+import {
+	type DaemonContext,
+	type Feature,
+	json,
+	readBody,
+} from "../feature.ts";
 import { readJsonFile, writePrivateFile } from "../paths.ts";
 import type { PrivacyGate } from "../services.ts";
 import { redact } from "../tutor/redact.ts";
@@ -11,7 +17,11 @@ export type SourceMap = Record<string, SourceFlags>;
 const MAX_PATH = 4_096;
 
 function normalizePath(path: string): string {
-	return path.length > 1 ? path.replace(/\/+$/, "") : path;
+	try {
+		return realpathSync(resolve(path));
+	} catch {
+		return resolve(path);
+	}
 }
 
 /** `child` equals `parent` or lives under it (path-segment aligned). */
@@ -85,6 +95,7 @@ export class SourcePrivacy implements PrivacyGate {
 	isLocalOnly(sourcePath?: string): boolean {
 		const fallback = this.defaults().defaultLocalOnly;
 		if (!sourcePath) return fallback;
+		sourcePath = normalizePath(sourcePath);
 		const direct = this.#match(sourcePath);
 		if (direct) return direct.local_only;
 		for (const [session, cwd] of this.#cwds)
@@ -104,7 +115,7 @@ export class SourcePrivacy implements PrivacyGate {
 	indexIntoGraph(sourcePath?: string): boolean {
 		if (this.isLocalOnly(sourcePath)) return false;
 		if (!sourcePath) return true;
-		return this.#match(sourcePath)?.index_graph ?? true;
+		return this.#match(normalizePath(sourcePath))?.index_graph ?? true;
 	}
 
 	async set(
@@ -148,8 +159,7 @@ export function createPrivacyFeature(
 		async route(request, url, cors) {
 			if (url.pathname !== "/api/sources") return undefined;
 			await gate.load();
-			if (request.method === "GET")
-				return json({ sources: gate.list() }, cors);
+			if (request.method === "GET") return json({ sources: gate.list() }, cors);
 			if (request.method !== "POST")
 				return json({ error: "method not allowed" }, cors, 405);
 			const parsed = SourcePatch.safeParse(await readBody(request));

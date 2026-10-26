@@ -1,6 +1,8 @@
 // GENERATED from apps/daemon/src/protocol.ts — do not edit by hand.
 // Regenerate with `bun run gen-protocol`; the drift test enforces byte-identity.
 
+import { z } from "zod";
+
 /**
  * Canonical daemon WebSocket protocol. This file is self-contained and copied
  * verbatim (plus a generated header) into apps/desktop/src/lib/protocol.ts by
@@ -207,6 +209,7 @@ export type SessionDetail = {
 export type TelemetryEntry = TurnTelemetry & { turnId: string; at: number };
 
 export type SidecarSettings = {
+	hotkeys: Record<string, string>;
 	lanes: { fast?: string; deep?: string };
 	decide: {
 		adapter: "auto" | "jev" | "llm" | "rules";
@@ -251,7 +254,12 @@ export type DaemonMessage =
 	| { type: "tutor_documents"; documents: TutorDocuments }
 	| { type: "daemon_error"; scope: DaemonErrorScope; message: string }
 	| { type: "error"; message: string }
-	| { type: "turn_started"; turnId: string; source: TurnSource }
+	| {
+			type: "turn_started";
+			turnId: string;
+			source: TurnSource;
+			lessonId?: string;
+	  }
 	| { type: "transcript"; turnId: string; text: string; final: boolean }
 	/** One spoken sentence of the fast lane; clients append and speak each. */
 	| { type: "fast_answer"; turnId: string; text: string }
@@ -289,6 +297,8 @@ export type ClientMessage =
 	| { type: "interrupt" }
 	| { type: "answer"; questionId: string; value: string }
 	| { type: "grade"; cardId: string; rating: ReviewRating }
+	| { type: "anchor_pin" }
+	| { type: "turn_telemetry"; turnId: string; tts_first_audio_ms: number }
 	| { type: "anchor_confirm"; accept: boolean }
 	| { type: "bind_session"; sessionPath: string | null }
 	| { type: "dnd"; on: boolean }
@@ -399,59 +409,45 @@ function isQuestion(value: unknown): value is Question {
 }
 
 /** Validate an unknown value as a client-to-daemon message, or undefined. */
+export const ClientMessageSchema = z.discriminatedUnion("type", [
+	z.object({
+		type: z.literal("question"),
+		text: z.string().trim().min(1).max(16000),
+		source: z.enum(["ptt", "typed", "mcp"]).optional(),
+		lessonId: z.string().optional(),
+		sttMs: z.number().nonnegative().optional(),
+	}),
+	z.object({ type: z.literal("set_mode"), name: z.string().min(1).max(100) }),
+	z.object({ type: z.literal("ptt_start") }),
+	z.object({ type: z.literal("ptt_stop") }),
+	z.object({ type: z.literal("interrupt") }),
+	z.object({
+		type: z.literal("answer"),
+		questionId: z.string().min(1),
+		value: z.string().min(1).max(16000),
+	}),
+	z.object({
+		type: z.literal("grade"),
+		cardId: z.string().min(1),
+		rating: z.enum(["again", "hard", "good", "easy"]),
+	}),
+	z.object({ type: z.literal("anchor_pin") }),
+	z.object({ type: z.literal("anchor_confirm"), accept: z.boolean() }),
+	z.object({
+		type: z.literal("bind_session"),
+		sessionPath: z.string().min(1).nullable(),
+	}),
+	z.object({ type: z.literal("dnd"), on: z.boolean() }),
+	z.object({ type: z.literal("abort_job"), jobId: z.string().min(1) }),
+	z.object({
+		type: z.literal("turn_telemetry"),
+		turnId: z.string().min(1),
+		tts_first_audio_ms: z.number().nonnegative(),
+	}),
+]);
 export function parseClientMessage(value: unknown): ClientMessage | undefined {
-	if (!isRecord(value) || typeof value.type !== "string") return undefined;
-	switch (value.type) {
-		case "question":
-			return typeof value.text === "string" &&
-				value.text.trim() &&
-				(value.source === undefined ||
-					(["ptt", "typed", "mcp"] as const).includes(
-						value.source as TurnSource,
-					)) &&
-				(value.lessonId === undefined || typeof value.lessonId === "string") &&
-				(value.sttMs === undefined || typeof value.sttMs === "number")
-				? (value as ClientMessage)
-				: undefined;
-		case "set_mode":
-			return typeof value.name === "string"
-				? (value as ClientMessage)
-				: undefined;
-		case "ptt_start":
-		case "ptt_stop":
-		case "interrupt":
-			return value as ClientMessage;
-		case "answer":
-			return typeof value.questionId === "string" &&
-				typeof value.value === "string"
-				? (value as ClientMessage)
-				: undefined;
-		case "grade":
-			return typeof value.cardId === "string" &&
-				(["again", "hard", "good", "easy"] as const).includes(
-					value.rating as ReviewRating,
-				)
-				? (value as ClientMessage)
-				: undefined;
-		case "anchor_confirm":
-			return typeof value.accept === "boolean"
-				? (value as ClientMessage)
-				: undefined;
-		case "bind_session":
-			return value.sessionPath === null || typeof value.sessionPath === "string"
-				? (value as ClientMessage)
-				: undefined;
-		case "dnd":
-			return typeof value.on === "boolean"
-				? (value as ClientMessage)
-				: undefined;
-		case "abort_job":
-			return typeof value.jobId === "string"
-				? (value as ClientMessage)
-				: undefined;
-		default:
-			return undefined;
-	}
+	const parsed = ClientMessageSchema.safeParse(value);
+	return parsed.success ? parsed.data : undefined;
 }
 
 /** Validate an unknown value as a daemon-to-client message, or undefined. */

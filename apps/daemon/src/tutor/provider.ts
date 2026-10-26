@@ -9,6 +9,7 @@ export type PiModel = {
 	provider: string;
 	baseUrl: string;
 	maxTokens?: number;
+	cost?: { input: number; output: number };
 };
 
 function expired(value: unknown): boolean {
@@ -53,6 +54,15 @@ export async function loadPiRegistry(
 				modelId: data.id,
 				provider: data.provider,
 				baseUrl: data.baseUrl,
+				cost:
+					data.cost &&
+					typeof data.cost === "object" &&
+					"input" in data.cost &&
+					"output" in data.cost &&
+					typeof data.cost.input === "number" &&
+					typeof data.cost.output === "number"
+						? { input: data.cost.input, output: data.cost.output }
+						: undefined,
 				maxTokens:
 					typeof data.maxTokens === "number" ? data.maxTokens : undefined,
 			});
