@@ -274,6 +274,7 @@ async function llmAudit(
 }
 
 const CLAIM_MARKERS = [
+	" confirms ",
 	" is ",
 	" are ",
 	" causes ",
