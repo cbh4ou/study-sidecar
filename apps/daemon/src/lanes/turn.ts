@@ -157,6 +157,7 @@ export class TurnRunner {
 					type: "fast_answer",
 					turnId: turn.turnId,
 					text: "Noted.",
+					speak: false,
 				});
 				return;
 			}

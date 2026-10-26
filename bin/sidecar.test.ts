@@ -223,6 +223,7 @@ test("up --fake passes --fake and an isolated SIDECAR_HOME to every child", () =
 	});
 	const daemon = children.find(({ name }) => name === "daemon");
 	expect(daemon?.command).toContain("--fake");
+	expect(children.some((child) => child.name === "voice")).toBe(false);
 	for (const child of children) {
 		expect(child.env?.SIDECAR_FAKE).toBe("1");
 		expect(child.env?.SIDECAR_HOME).toBe("/tmp/fake-home");

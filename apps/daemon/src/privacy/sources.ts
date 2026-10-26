@@ -1,4 +1,5 @@
 import { realpathSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod";
 import {
@@ -7,7 +8,7 @@ import {
 	json,
 	readBody,
 } from "../feature.ts";
-import { readJsonFile, writePrivateFile } from "../paths.ts";
+import { writePrivateFile } from "../paths.ts";
 import type { PrivacyGate } from "../services.ts";
 import { redact } from "../tutor/redact.ts";
 
@@ -31,14 +32,11 @@ export function underPath(child: string, parent: string): boolean {
 	return a === b || a.startsWith(b === "/" ? "/" : `${b}/`);
 }
 
-function isFlags(value: unknown): value is SourceFlags {
-	return (
-		typeof value === "object" &&
-		value !== null &&
-		typeof (value as SourceFlags).local_only === "boolean" &&
-		typeof (value as SourceFlags).index_graph === "boolean"
-	);
-}
+const SourceFlagsSchema = z.object({
+	local_only: z.boolean(),
+	index_graph: z.boolean().default(true),
+});
+const SourceMapSchema = z.record(z.string(), SourceFlagsSchema);
 
 /**
  * `<root>/sources.json`: per-source privacy flags. Sole writer of that file.
@@ -53,6 +51,7 @@ export class SourcePrivacy implements PrivacyGate {
 		this.#aliases.set(id, path);
 	}
 	#loaded?: Promise<void>;
+	#failed = false;
 	#write: Promise<void> = Promise.resolve();
 
 	constructor(
@@ -67,14 +66,26 @@ export class SourcePrivacy implements PrivacyGate {
 	}
 
 	load(): Promise<void> {
-		this.#loaded ??= readJsonFile<unknown>(this.path, {}).then((raw) => {
-			const next: SourceMap = {};
-			if (raw && typeof raw === "object" && !Array.isArray(raw))
+		this.#loaded ??= (async () => {
+			let text: string;
+			try {
+				text = await readFile(this.path, "utf8");
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+				this.#failed = true;
+				throw error;
+			}
+			try {
+				const raw = SourceMapSchema.parse(JSON.parse(text));
+				const next: SourceMap = {};
 				for (const [path, flags] of Object.entries(raw))
-					if (isFlags(flags)) next[normalizePath(path)] = { ...flags };
-			// Writes that happened before the file finished loading win.
-			this.#sources = { ...next, ...this.#sources };
-		});
+					next[normalizePath(path)] = flags;
+				this.#sources = { ...next, ...this.#sources };
+			} catch (error) {
+				this.#failed = true;
+				throw error;
+			}
+		})();
 		return this.#loaded;
 	}
 
@@ -97,6 +108,7 @@ export class SourcePrivacy implements PrivacyGate {
 	}
 
 	isLocalOnly(sourcePath?: string): boolean {
+		if (this.#failed) return true;
 		const fallback = this.defaults().defaultLocalOnly;
 		if (!sourcePath) return fallback;
 		sourcePath = normalizePath(this.#aliases.get(sourcePath) ?? sourcePath);

@@ -11,6 +11,7 @@ import {
 } from "./auth.ts";
 import type { DaemonContext, Feature } from "./feature.ts";
 import { createFeatures } from "./features.ts";
+import { sourcePath } from "./graph/privacy.ts";
 import type { SessionEvent, SessionInfo } from "./ingest/events.ts";
 import {
 	type Harness,
@@ -126,6 +127,24 @@ const tutor = new TutorEngine(
 					path ?? context.services.sessions?.bound()?.path ?? watched,
 				) ??
 					false)),
+		allowExternalCloud: (path) =>
+			context.services.privacy?.allowCloud(
+				path ?? context.services.sessions?.bound()?.path ?? watched,
+			) ?? false,
+		sourcePaths: async () => {
+			const id = context.services.learn?.activeLessonId();
+			const lesson = id ? await context.services.learn?.lesson(id) : undefined;
+			return [
+				...new Set(
+					[
+						context.services.sessions?.bound()?.path ?? watched,
+						...[...(lesson?.anchors ?? []), ...(lesson?.sources ?? [])].map(
+							sourcePath,
+						),
+					].filter(Boolean),
+				),
+			];
+		},
 		decide: () => context.ports.decide,
 		sourceScope: () =>
 			context.services.learn?.activeLessonId() ??

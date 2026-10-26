@@ -103,6 +103,8 @@ test("full fake daemon registers features, streams both lanes, and owns its writ
 	const child = Bun.spawn(
 		[
 			process.execPath,
+			"--preload",
+			join(import.meta.dir, "../../..", "scripts/audit-writes.ts"),
 			join(import.meta.dir, "index.ts"),
 			"--fake",
 			"--port",
@@ -229,6 +231,68 @@ test("full fake daemon registers features, streams both lanes, and owns its writ
 		ws?.close();
 		child.kill();
 		await child.exited;
+		const audited = JSON.parse(
+			await readFile(join(home, "owned", ".write-audit.json"), "utf8"),
+		);
+		expect(audited.length).toBeGreaterThan(0);
+		expect(
+			audited.every((entry: { path: string }) =>
+				entry.path.startsWith(join(home, "owned")),
+			),
+		).toBe(true);
 		await rm(home, { recursive: true, force: true });
 	}
 }, 20000);
+
+test("write audit rejects writes outside owned storage", async () => {
+	const home = await mkdtemp(join(tmpdir(), "sidecar-write-guard-"));
+	try {
+		const outside = join(home, "outside");
+		const child = Bun.spawn(
+			[
+				process.execPath,
+				"--preload",
+				join(import.meta.dir, "../../..", "scripts/audit-writes.ts"),
+				"-e",
+				`await Bun.write(${JSON.stringify(outside)},'forbidden')`,
+			],
+			{
+				env: {
+					HOME: home,
+					PATH: process.env.PATH,
+					SIDECAR_HOME: join(home, "owned"),
+					BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+				},
+				stderr: "pipe",
+				stdout: "ignore",
+			},
+		);
+		expect(await child.exited).not.toBe(0);
+		expect(await new Response(child.stderr).text()).toContain(
+			"Write outside sidecar home",
+		);
+		expect(await Bun.file(outside).exists()).toBe(false);
+	} finally {
+		await rm(home, { recursive: true, force: true });
+	}
+});
+
+test("stored source flags honor local-only without graph field and fail closed on corruption", async () => {
+	const root = await mkdtemp(join(tmpdir(), "sidecar-source-schema-"));
+	try {
+		await writeFile(
+			join(root, "sources.json"),
+			JSON.stringify({ "/private": { local_only: true } }),
+		);
+		const privacy = new SourcePrivacy(root);
+		await privacy.load();
+		expect(privacy.allowCloud("/private/file")).toBe(false);
+		expect(privacy.indexIntoGraph("/private/file")).toBe(true);
+		await writeFile(join(root, "sources.json"), "invalid json");
+		const broken = new SourcePrivacy(root);
+		await expect(broken.load()).rejects.toThrow();
+		expect(broken.allowCloud("/anywhere")).toBe(false);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});

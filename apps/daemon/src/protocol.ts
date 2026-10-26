@@ -259,7 +259,7 @@ export type DaemonMessage =
 	  }
 	| { type: "transcript"; turnId: string; text: string; final: boolean }
 	/** One spoken sentence of the fast lane; clients append and speak each. */
-	| { type: "fast_answer"; turnId: string; text: string }
+	| { type: "fast_answer"; turnId: string; text: string; speak?: boolean }
 	| {
 			type: "deep_update";
 			turnId: string;
@@ -561,6 +561,7 @@ const MvpDaemonBoundaries = {
 		type: z.literal("fast_answer"),
 		turnId: z.string(),
 		text: z.string(),
+		speak: z.boolean().optional(),
 	}),
 	deep_update: z.object({
 		type: z.literal("deep_update"),

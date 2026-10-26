@@ -332,7 +332,7 @@ export function launchChildren(
 			},
 		},
 	];
-	if (withVoice) {
+	if (withVoice && !fake) {
 		children.push({
 			name: "voice",
 			command: [
