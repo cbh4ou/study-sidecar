@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useDueCards } from "../lib/api";
+import type { Card } from "../lib/protocol";
 import { useHudMessages } from "../lib/ws";
 import { ReviewCard } from "../pages/Review";
 import { Sessions } from "../pages/Sessions";
@@ -7,21 +9,30 @@ export function PillStates({
 	onExpand,
 	onOpen,
 	onPicker,
+	onCardChange,
 }: {
 	onExpand: () => void;
 	onOpen: () => void;
 	onPicker?: (open: boolean) => void;
+	onCardChange?: (active: boolean) => void;
 }) {
 	const { state, send } = useHudMessages();
 	const { voice, startPtt, stopPtt, interrupt } = useVoice();
 	const [picker, setPicker] = useState(false);
+	const { data: due } = useDueCards();
+	const [requestedCard, setRequestedCard] = useState<Card>();
 	const [dismissed, setDismissed] = useState("");
 	const [anchorDismissed, setAnchorDismissed] = useState("");
 	const anchor =
 		state.anchor && JSON.stringify(state.anchor.source) !== anchorDismissed
 			? state.anchor
 			: undefined;
-	const card = state.card?.id !== dismissed ? state.card : undefined;
+	const candidate = requestedCard ?? state.card;
+	const card = candidate?.id !== dismissed ? candidate : undefined;
+	useEffect(() => {
+		onCardChange?.(Boolean(card));
+		return () => onCardChange?.(false);
+	}, [card, onCardChange]);
 	const status = voice.listening
 		? "listening"
 		: voice.playback
@@ -57,7 +68,12 @@ export function PillStates({
 				>
 					{voice.listening ? "●" : "Mic"}
 				</button>
-				<button type="button" aria-label="Review due cards" onClick={onOpen}>
+				<button
+					type="button"
+					aria-label="Review due cards"
+					disabled={!due?.cards.length}
+					onClick={() => setRequestedCard(due?.cards[0])}
+				>
 					{state.dueCount ?? 0} due
 				</button>
 				<button type="button" aria-label="Expand pill" onClick={onExpand}>
@@ -117,7 +133,10 @@ export function PillStates({
 					key={card.id}
 					card={card}
 					compact
-					onGrade={() => setDismissed(card.id)}
+					onGrade={() => {
+						setDismissed(card.id);
+						setRequestedCard(undefined);
+					}}
 				/>
 			)}
 			{picker && (

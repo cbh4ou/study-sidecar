@@ -12,6 +12,7 @@ export function PillApp() {
 	const { data: settings } = useSettings();
 	const [expanded, setExpanded] = useState(false);
 	const [picker, setPicker] = useState(false);
+	const [reviewing, setReviewing] = useState(false);
 	const [dnd, setDnd] = useState(false);
 	const native = "__TAURI_INTERNALS__" in window || "__TAURI__" in window;
 	const open = useCallback(() => {
@@ -25,11 +26,11 @@ export function PillApp() {
 				variant:
 					expanded || picker
 						? "expanded"
-						: state.fastAnswer || state.anchor || state.card
+						: state.fastAnswer || state.anchor || reviewing
 							? "card"
 							: "compact",
 			}).catch(() => undefined);
-	}, [native, expanded, picker, state.fastAnswer, state.anchor, state.card]);
+	}, [native, expanded, picker, state.fastAnswer, state.anchor, reviewing]);
 	useEffect(() => {
 		if (native) void invoke("set_dnd", { on: dnd }).catch(() => undefined);
 	}, [native, dnd]);
@@ -115,6 +116,7 @@ export function PillApp() {
 					onExpand={() => setExpanded(true)}
 					onOpen={open}
 					onPicker={setPicker}
+					onCardChange={setReviewing}
 				/>
 			)}
 		</main>
