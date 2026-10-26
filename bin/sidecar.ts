@@ -281,9 +281,18 @@ export async function down(runDir = DEFAULT_RUN_DIR): Promise<void> {
 
 function usage(): string {
 	return [
-		"Usage: bun run sidecar <up|down|status> [options]",
-		"  up [--with-voice] [--with-desktop] [--harness auto] [--port 4321] [--token <token>] [--voice-token <token>]",
+		"Usage: bun run sidecar <up|down|status|mcp> [options]",
+		"  up [--fake] [--with-voice] [--with-desktop] [--harness auto] [--port 4321] [--token <token>] [--voice-token <token>]",
+		"  mcp    stdio MCP server (tutor_ask, tutor_note) for coding agents",
 	].join("\n");
+}
+
+/** Sidecar home used by `up --fake`: never the real ~/.study-sidecar. */
+export const FAKE_HOME = join(DEFAULT_RUN_DIR, "fake-home");
+
+/** Environment every child gets in fake mode. */
+export function fakeEnv(home = FAKE_HOME): Record<string, string> {
+	return { SIDECAR_FAKE: "1", SIDECAR_HOME: home };
 }
 
 function option(args: string[], name: string, fallback: string): string {
@@ -298,6 +307,7 @@ export function launchChildren(
 	voiceToken: string,
 	withVoice: boolean,
 	withDesktop: boolean,
+	fake?: { home: string },
 ): ChildSpec[] {
 	const children: ChildSpec[] = [
 		{
@@ -313,6 +323,7 @@ export function launchChildren(
 				harness,
 				"--port",
 				String(port),
+				...(fake ? ["--fake"] : []),
 			],
 			env: {
 				SIDECAR_TOKEN: token,
@@ -346,6 +357,9 @@ export function launchChildren(
 			fallbackUrl: `http://127.0.0.1:${port}`,
 		});
 	}
+	if (fake)
+		for (const child of children)
+			child.env = { ...child.env, ...fakeEnv(fake.home) };
 	return children;
 }
 
@@ -361,6 +375,14 @@ async function main(): Promise<void> {
 	}
 	if (command === "down") {
 		await down();
+		return;
+	}
+	if (command === "mcp") {
+		// In-process stdio server: stdout belongs to the MCP transport.
+		const { main: mcpMain } = await import(
+			"../apps/daemon/src/mcp/server.ts"
+		);
+		await mcpMain();
 		return;
 	}
 	if (command !== "up") throw new Error(usage());
@@ -382,6 +404,8 @@ async function main(): Promise<void> {
 		process.env.SIDECAR_VOICE_TOKEN ||
 		generateToken();
 	const root = dirname(dirname(import.meta.path));
+	const fake = args.includes("--fake");
+	if (fake) await mkdir(FAKE_HOME, { recursive: true, mode: 0o700 });
 	const children = launchChildren(
 		harness,
 		port,
@@ -389,6 +413,7 @@ async function main(): Promise<void> {
 		voiceToken,
 		args.includes("--with-voice"),
 		args.includes("--with-desktop"),
+		fake ? { home: FAKE_HOME } : undefined,
 	);
 
 	const supervisor = new Supervisor({ root, children, token });
@@ -398,7 +423,7 @@ async function main(): Promise<void> {
 	try {
 		await supervisor.start();
 		console.log(
-			`sidecar daemon: http://127.0.0.1:${port} (token in .run/token)`,
+			`sidecar daemon: http://127.0.0.1:${port} (token in .run/token)${fake ? `, fake mode, home ${FAKE_HOME}` : ""}`,
 		);
 		const code = await supervisor.wait();
 		process.exitCode = code;

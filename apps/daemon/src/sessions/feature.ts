@@ -153,9 +153,11 @@ export function createSessionsFeature(
 				for (const note of await learn.recentNotes(200))
 					if (
 						refMatches(note.source, path, meta) &&
+						// The registry already holds MCP notes it saw; skip their echo.
 						!notes.some(
 							(existing) =>
-								existing.concept === note.concept && existing.at === note.at,
+								existing.concept === note.concept &&
+								(existing.why ?? "") === (note.why ?? ""),
 						)
 					)
 						notes.push({

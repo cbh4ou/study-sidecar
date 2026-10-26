@@ -23,8 +23,10 @@ function prng(seed: number): () => number {
 	};
 }
 
-const WORDS = "channel ack producer consumer buffer retry timeout queue the a of"
-	.split(" ");
+const WORDS =
+	"channel ack producer consumer buffer retry timeout queue the a of".split(
+		" ",
+	);
 
 function words(rand: () => number, max: number): string {
 	const n = 1 + Math.floor(rand() * max);
@@ -96,8 +98,14 @@ describe("context packet (T1)", () => {
 					).join("\n"),
 				},
 			],
-			receipts: Array.from({ length: 40 }, (_, i) => `receipt ${i} ${"r".repeat(60)}`),
-			memory: Array.from({ length: 5 }, (_, i) => `memory ${i} ${"m".repeat(300)}`),
+			receipts: Array.from(
+				{ length: 40 },
+				(_, i) => `receipt ${i} ${"r".repeat(60)}`,
+			),
+			memory: Array.from(
+				{ length: 5 },
+				(_, i) => `memory ${i} ${"m".repeat(300)}`,
+			),
 			lesson: ["lesson ".repeat(150)],
 			question: "",
 		};
@@ -118,17 +126,24 @@ describe("context packet (T1)", () => {
 			// Memory never shrinks while receipts still has items, etc.
 			if (packet.sections.receipts.items > 0) {
 				expect(packet.sections.memory.tokens).toBe(base.sections.memory.tokens);
-				expect(packet.sections.anchors.tokens).toBe(base.sections.anchors.tokens);
+				expect(packet.sections.anchors.tokens).toBe(
+					base.sections.anchors.tokens,
+				);
 			}
 			if (packet.sections.memory.items > 0)
-				expect(packet.sections.anchors.tokens).toBe(base.sections.anchors.tokens);
+				expect(packet.sections.anchors.tokens).toBe(
+					base.sections.anchors.tokens,
+				);
 		}
 		emptied = emptied.slice(0, 3);
 		expect(emptied).toEqual(["receipts", "memory", "anchors"]);
 	});
 
 	test("drops the oldest receipts first", () => {
-		const receipts = Array.from({ length: 30 }, (_, i) => `r${i} ${"x".repeat(200)}`);
+		const receipts = Array.from(
+			{ length: 30 },
+			(_, i) => `r${i} ${"x".repeat(200)}`,
+		);
 		const packet = buildContextPacket({
 			mode: MODE,
 			tutorRules: RULES,
@@ -204,7 +219,9 @@ describe("PacketWarmer", () => {
 			sessions: {
 				bound: () => undefined,
 				receipts: () => receipts,
-				searchAcross: () => [{ path: "/s/other.jsonl", receipt: "other receipt" }],
+				searchAcross: () => [
+					{ path: "/s/other.jsonl", receipt: "other receipt" },
+				],
 			},
 		};
 	}
