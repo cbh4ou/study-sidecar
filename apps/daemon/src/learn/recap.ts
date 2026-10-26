@@ -118,11 +118,11 @@ export async function llmCandidates(
 	return RecapSchema.parse(extractJson(reply)).cards.slice(0, 5);
 }
 
-/** Graph id when the concept is known, else a synthetic `n_concept_*` id. */
+/** Only real graph propositions may receive recall cards. */
 export async function resolvePropositionId(
 	candidate: RecapCandidate,
 	graph: GraphService | undefined,
-): Promise<string> {
+): Promise<string | undefined> {
 	if (candidate.propositionId) {
 		const known = await graph
 			?.get(candidate.propositionId)
@@ -135,5 +135,5 @@ export async function resolvePropositionId(
 		.then((found) => found[0])
 		.catch(() => undefined);
 	if (hit) return hit.id;
-	return syntheticPropositionId(concept);
+	return undefined;
 }

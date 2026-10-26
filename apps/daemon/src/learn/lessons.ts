@@ -10,6 +10,7 @@ import type {
 	Question,
 	SourceRef,
 } from "../protocol.ts";
+import { LessonRecordSchema } from "./contracts.ts";
 import { derivePlanStatuses, planInit } from "./plan.ts";
 
 export const MAX_ANCHORS = 8;
@@ -92,26 +93,10 @@ export function toDetail(record: LessonRecord): LessonDetail {
 	};
 }
 
-function normalize(raw: Partial<LessonRecord>): LessonRecord | undefined {
-	if (
-		typeof raw.id !== "string" ||
-		typeof raw.goal !== "string" ||
-		typeof raw.createdAt !== "string"
-	)
-		return undefined;
-	const record = {
-		...raw,
-		title: raw.title ?? defaultTitle(raw.goal),
-		anchors: Array.isArray(raw.anchors) ? raw.anchors : [],
-		updatedAt: raw.updatedAt ?? raw.createdAt,
-		messages: Array.isArray(raw.messages) ? raw.messages : [],
-		questions: Array.isArray(raw.questions) ? raw.questions : [],
-		answers: raw.answers && typeof raw.answers === "object" ? raw.answers : {},
-		queuedGaps: Array.isArray(raw.queuedGaps) ? raw.queuedGaps : [],
-		sources: Array.isArray(raw.sources) ? raw.sources : [],
-	} as LessonRecord;
-	record.phase = derivePhase(record);
-	return record;
+function normalize(raw: unknown): LessonRecord | undefined {
+	const parsed = LessonRecordSchema.safeParse(raw);
+	if (!parsed.success) return undefined;
+	return { ...parsed.data, phase: derivePhase(parsed.data) };
 }
 
 let seq = 0;
@@ -228,6 +213,7 @@ export class LessonStore {
 	}
 
 	async #write(record: LessonRecord): Promise<void> {
+		LessonRecordSchema.parse(record);
 		await writePrivateFile(
 			this.#path(record.id),
 			`${JSON.stringify(record, null, 2)}\n`,

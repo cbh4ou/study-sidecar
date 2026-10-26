@@ -1,5 +1,7 @@
+import { z } from "zod";
 import type { LlmMessage, LlmPort } from "../ports/llm.ts";
 import type { Proposition, SourceRef } from "../protocol.ts";
+import type { PrivacyGate } from "../services.ts";
 import { redact } from "../tutor/redact.ts";
 import {
 	type AuditorSubmit,
@@ -9,6 +11,7 @@ import {
 	formatIssues,
 } from "./contracts.ts";
 import { type MergePlan, merge, sourceChains } from "./merger.ts";
+import { privateProposition, sourcePath } from "./privacy.ts";
 import { rankNodes } from "./search.ts";
 import type { GraphState, GraphStore } from "./store.ts";
 
@@ -16,11 +19,13 @@ export type ExtractionSource = {
 	id: string;
 	label: string;
 	localOnly?: boolean;
+	refs?: SourceRef[];
 };
 export type ProseMessage = { id: string; text: string };
 
 export type ExtractionDeps = {
 	store: GraphStore;
+	privacy?: PrivacyGate;
 	llm: LlmPort;
 	/** Deterministic heuristic extractor and no-op auditor (no model). */
 	fake?: boolean;
@@ -35,6 +40,20 @@ export type ExtractionDeps = {
 
 export const MAX_EXTRACTOR_TURNS = 3;
 const AUDIT_CANDIDATES = 5;
+const AuditCallsSchema = z.object({
+	calls: z
+		.array(
+			z.discriminatedUnion("tool", [
+				z.object({ tool: z.literal("find"), text: z.string().min(1) }),
+				z.object({
+					tool: z.literal("list_propositions"),
+					sourceId: z.string().min(1),
+				}),
+			]),
+		)
+		.min(1)
+		.max(5),
+});
 
 export const EXTRACTOR_SYSTEM = `You extract a knowledge graph from tutor prose.
 A proposition is one objective, world-facing claim (never about the learner, the lesson, or what was said). Give it a short name (<= 80 chars) and a one-sentence statement.
@@ -45,7 +64,8 @@ Reply with ONE JSON object and nothing else:
 
 export const AUDITOR_SYSTEM = `You audit new propositions against an existing knowledge graph.
 For each new proposition, decide whether it states the SAME claim as one of its listed candidates (same meaning, possibly different wording). Prefer linking when they are equivalent; never link a claim to a merely related, broader, or narrower one.
-Reply with ONE JSON object and nothing else:
+You may request read-only tools with {"calls":[{"tool":"find","text":"claim"},{"tool":"list_propositions","sourceId":"source id"}]}. Tool results contain existing propositions only.
+When ready reply with ONE JSON object and nothing else:
 {"links":[{"newId":"p1","existingId":"n_..."}]}`;
 
 function compact(node: Proposition): string {
@@ -152,10 +172,12 @@ async function llmExtract(
 		if (checked.ok) return checked.submit;
 		lastError = checked.error;
 		messages.push(
-			{ role: "assistant", content: reply },
+			{ role: "assistant", content: clean(reply) },
 			{
 				role: "user",
-				content: `Submit rejected: ${checked.error}. Fix it and reply with the corrected JSON object only.`,
+				content: clean(
+					`Submit rejected: ${checked.error}. Fix it and reply with the corrected JSON object only.`,
+				),
 			},
 		);
 	}
@@ -164,15 +186,7 @@ async function llmExtract(
 	);
 }
 
-/**
- * Auditor. Deviation from spec 11.3: the spec gives the auditor read-only
- * tools `find(text)` and `list_propositions(sourceId)`, but LlmPort has no
- * tool calling. We pre-retrieve what `find` would have returned (the top-5
- * keyword candidates from the whole existing graph for each new
- * proposition) and inline them in the prompt. The auditor still sees only
- * the new propositions plus those candidates, and still returns identity
- * links only. Links to ids that were not offered are discarded.
- */
+/** Bounded auditor read operations remain deterministic and read-only. */
 async function llmAudit(
 	deps: ExtractionDeps,
 	state: GraphState,
@@ -217,8 +231,28 @@ async function llmAudit(
 		} catch (error) {
 			lastError = `invalid JSON: ${(error as Error).message}`;
 			messages.push(
-				{ role: "assistant", content: reply },
+				{ role: "assistant", content: clean(reply) },
 				{ role: "user", content: `Submit rejected: ${lastError}.` },
+			);
+			continue;
+		}
+		const calls = AuditCallsSchema.safeParse(raw);
+		if (calls.success) {
+			const results = calls.data.calls.map((call) => {
+				const nodes =
+					call.tool === "find"
+						? rankNodes(state.nodes, call.text, 20)
+						: state.nodes.filter((node) => node.birthSource === call.sourceId);
+				for (const prop of submit.propositions) {
+					const ids = offered.get(prop.id) ?? new Set<string>();
+					for (const node of nodes) ids.add(node.id);
+					offered.set(prop.id, ids);
+				}
+				return { tool: call.tool, nodes: nodes.slice(0, 50).map(compact) };
+			});
+			messages.push(
+				{ role: "assistant", content: clean(reply) },
+				{ role: "user", content: clean(JSON.stringify(results)) },
 			);
 			continue;
 		}
@@ -226,7 +260,7 @@ async function llmAudit(
 		if (!parsed.success) {
 			lastError = formatIssues(parsed.error);
 			messages.push(
-				{ role: "assistant", content: reply },
+				{ role: "assistant", content: clean(reply) },
 				{ role: "user", content: `Submit rejected: ${lastError}.` },
 			);
 			continue;
@@ -309,11 +343,14 @@ function defaultRefs(
 	source: ExtractionSource,
 	batch: ProseMessage[],
 ): SourceRef[] {
-	return batch.map((m) => ({
-		kind: "lesson" as const,
-		lessonId: source.id,
-		messageId: m.id,
-	}));
+	return [
+		...(source.refs ?? []),
+		...batch.map((m) => ({
+			kind: "lesson" as const,
+			lessonId: source.id,
+			messageId: m.id,
+		})),
+	];
 }
 
 export type ExtractionResult = MergePlan;
@@ -329,10 +366,31 @@ export async function runExtraction(
 	batch: ProseMessage[],
 ): Promise<ExtractionResult> {
 	const state = await deps.store.read();
+	if (
+		(source.localOnly ||
+			deps.privacy?.isLocalOnly(source.id) ||
+			source.refs?.some((ref) => deps.privacy?.isLocalOnly(sourcePath(ref)))) &&
+		deps.llm.isCloud &&
+		!deps.fake
+	)
+		throw new Error("Source is local only");
+	const nodes = deps.llm.isCloud
+		? state.nodes.filter((node) => !privateProposition(node, deps.privacy))
+		: state.nodes;
+	const visible = {
+		...state,
+		nodes,
+		byId: new Map(nodes.map((node) => [node.id, node])),
+		chains: state.chains.filter((chain) =>
+			[...chain.premises, chain.conclusion].every((id) =>
+				nodes.some((node) => node.id === id),
+			),
+		),
+	};
 	const submit = deps.fake
-		? heuristicExtract(batch, state)
-		: await llmExtract(deps, state, source, batch);
-	const links = deps.fake ? [] : await llmAudit(deps, state, submit);
+		? heuristicExtract(batch, visible)
+		: await llmExtract(deps, visible, source, batch);
+	const links = deps.fake ? [] : await llmAudit(deps, visible, submit);
 	if (deps.signal?.aborted) throw new Error("extraction aborted");
 	const plan = await merge(
 		deps.store,

@@ -9,6 +9,7 @@ import {
 import { appendJsonLine, readJsonLines } from "../paths.ts";
 import type { Clock } from "../ports/clock.ts";
 import type { Card, ReviewRating, SourceRef } from "../protocol.ts";
+import { CardSchema, ReviewSchema } from "./contracts.ts";
 
 /** One line of `cards/reviews.jsonl` (spec Section 6.2). */
 export type ReviewLogLine = {
@@ -33,33 +34,10 @@ const RATINGS: Record<ReviewRating, Grade> = {
 	easy: Rating.Easy,
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
-
-function isCard(value: unknown): value is Card {
-	return (
-		isRecord(value) &&
-		typeof value.id === "string" &&
-		typeof value.propositionId === "string" &&
-		typeof value.question === "string" &&
-		typeof value.createdAt === "string" &&
-		isRecord(value.source) &&
-		typeof value.source.kind === "string"
-	);
-}
-
-function isReview(value: unknown): value is ReviewLogLine {
-	return (
-		isRecord(value) &&
-		typeof value.cardId === "string" &&
-		typeof value.at === "string" &&
-		typeof value.rating === "string" &&
-		value.rating in RATINGS &&
-		(value.by === "button" ||
-			value.by === "voice" ||
-			value.by === "explain_back")
-	);
-}
+const isCard = (value: unknown): value is Card =>
+	CardSchema.safeParse(value).success;
+const isReview = (value: unknown): value is ReviewLogLine =>
+	ReviewSchema.safeParse(value).success;
 
 const scheduler = fsrs({ enable_fuzz: false });
 
@@ -136,6 +114,7 @@ export class CardStore {
 			source: input.source,
 			createdAt: new Date(now).toISOString(),
 		};
+		CardSchema.parse(card);
 		await appendJsonLine(this.cardsPath, card);
 		return card;
 	}
@@ -154,6 +133,7 @@ export class CardStore {
 			by,
 			...(answerText ? { answerText } : {}),
 		};
+		ReviewSchema.parse(line);
 		await appendJsonLine(this.reviewsPath, line);
 		return line;
 	}

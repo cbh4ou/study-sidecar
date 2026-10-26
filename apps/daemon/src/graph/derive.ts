@@ -1,4 +1,5 @@
 import type { GraphSnapshot } from "../protocol.ts";
+import { simplifyChains } from "./simplify.ts";
 import type { GraphState } from "./store.ts";
 
 /**
@@ -11,11 +12,13 @@ export function deriveSnapshot(
 	labels: Map<string, string> | Record<string, string> = {},
 ): GraphSnapshot {
 	const live = new Set(state.nodes.map((n) => n.id));
-	const chains = state.chains.filter(
-		(c) =>
-			live.has(c.conclusion) &&
-			c.premises.length > 0 &&
-			c.premises.every((p) => live.has(p)),
+	const chains = simplifyChains(
+		state.chains.filter(
+			(c) =>
+				live.has(c.conclusion) &&
+				c.premises.length > 0 &&
+				c.premises.every((p) => live.has(p)),
+		),
 	);
 	const label = (key: string): string | null =>
 		(labels instanceof Map ? labels.get(key) : labels[key]) ?? null;

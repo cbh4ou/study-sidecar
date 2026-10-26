@@ -1,11 +1,19 @@
-import type { GraphService } from "../services.ts";
+import type { GraphService, PrivacyGate } from "../services.ts";
 import { type ToolSpec, Type } from "../tool-spec.ts";
+import { redact } from "../tutor/redact.ts";
+import { privateProposition } from "./privacy.ts";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 
 /** Deep-lane graph tools (integrator adapts them into the tutor harness). */
-export function graphTools(service: GraphService): ToolSpec[] {
+export function graphTools(
+	service: GraphService,
+	options: {
+		isCloud?: () => boolean;
+		privacy?: () => PrivacyGate | undefined;
+	} = {},
+): ToolSpec[] {
 	return [
 		{
 			name: "list_propositions",
@@ -19,18 +27,26 @@ export function graphTools(service: GraphService): ToolSpec[] {
 				const query = typeof args.query === "string" ? args.query.trim() : "";
 				const raw = typeof args.limit === "number" ? args.limit : DEFAULT_LIMIT;
 				const limit = Math.max(1, Math.min(MAX_LIMIT, Math.floor(raw)));
-				const nodes = query
+				const found = query
 					? await service.search(query, limit)
 					: await service.recent(limit);
+				const nodes = options.isCloud?.()
+					? found.filter(
+							(node) => !privateProposition(node, options.privacy?.()),
+						)
+					: found;
 				if (!nodes.length)
 					return query
 						? `No propositions match "${query}".`
 						: "The graph is empty.";
-				return nodes
-					.map(
-						(n) => `${n.id} | ${n.name} | ${n.statement.replace(/\s+/g, " ")}`,
-					)
-					.join("\n");
+				return redact(
+					nodes
+						.map(
+							(n) =>
+								`${n.id} | ${n.name} | ${n.statement.replace(/\s+/g, " ")}`,
+						)
+						.join("\n"),
+				);
 			},
 		},
 	];

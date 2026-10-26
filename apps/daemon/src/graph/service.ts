@@ -9,6 +9,7 @@ import {
 	type ProseMessage,
 	runExtraction,
 } from "./extraction.ts";
+import { sourcePath } from "./privacy.ts";
 import { rankNodes } from "./search.ts";
 import { messageHash } from "./simplify.ts";
 import { GraphStore } from "./store.ts";
@@ -37,6 +38,7 @@ export type GraphServiceDeps = {
 type SourceLane = {
 	tail: Promise<void>;
 	pending: Map<string, ProseMessage>;
+	source?: ExtractionSource;
 };
 
 /** Counting semaphore. */
@@ -47,10 +49,11 @@ class Gate {
 	async acquire(): Promise<() => void> {
 		if (this.#active >= this.limit)
 			await new Promise<void>((resolve) => this.#waiters.push(resolve));
-		this.#active++;
+		else this.#active++;
 		return () => {
-			this.#active--;
-			this.#waiters.shift()?.();
+			const waiter = this.#waiters.shift();
+			if (waiter) waiter();
+			else this.#active--;
 		};
 	}
 }
@@ -120,9 +123,18 @@ export class GraphServiceImpl implements GraphService {
 		if (!this.#allowed(source)) return;
 		if (source.label) this.#labels.set(source.id, source.label);
 		const lane = this.#lane(source.id);
+		lane.source = source;
 		lane.tail = lane.tail
 			.then(() => this.#offer(source, lane, messages, opts.flush ?? false))
 			.catch((error) => this.deps.onError?.(source.id, error));
+	}
+
+	async flush(): Promise<void> {
+		await this.idle();
+		for (const lane of this.#lanes.values())
+			if (lane.source && lane.pending.size)
+				this.noteProse(lane.source, [], { flush: true });
+		await this.idle();
 	}
 
 	/** Resolves when every queued offer and run has settled (tests, shutdown). */
@@ -147,7 +159,10 @@ export class GraphServiceImpl implements GraphService {
 	#allowed(source: ExtractionSource): boolean {
 		const privacy = this.deps.privacy?.();
 		if (privacy?.indexIntoGraph(source.id) === false) return false;
-		const localOnly = source.localOnly || privacy?.isLocalOnly(source.id);
+		const localOnly =
+			source.localOnly ||
+			privacy?.isLocalOnly(source.id) ||
+			source.refs?.some((ref) => privacy?.isLocalOnly(sourcePath(ref)));
 		// Fake mode never calls the model, so local_only is safe there.
 		if (localOnly && this.deps.llm.isCloud && !this.deps.fake) return false;
 		return true;
@@ -218,6 +233,7 @@ export class GraphServiceImpl implements GraphService {
 			await runExtraction(
 				{
 					store: this.store,
+					privacy: this.deps.privacy?.(),
 					llm: this.deps.llm,
 					fake: this.deps.fake,
 					now: this.deps.now,

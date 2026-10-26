@@ -320,6 +320,13 @@ describe("T14 plan", () => {
 		);
 		const lesson = await learn.createLesson({ goal: "Learn attention" });
 		expect(lesson.phase).toBe("measure");
+		for (let i = 0; i < 3; i++) {
+			const q = await learn.askQuestion(lesson.id, {
+				kind: "ask",
+				prompt: `Probe ${i}`,
+			});
+			await learn.answer(q.id, "initial understanding");
+		}
 		await tools.set_measure?.execute({
 			levels: { vectors: "solid", softmax: "new" },
 		});
@@ -345,7 +352,7 @@ describe("T14 plan", () => {
 		});
 		let detail = (await learn.lesson(lesson.id)) as LessonDetail;
 		expect(detail.phase).toBe("teach");
-		const quiz = detail.questions[0];
+		const quiz = detail.questions.at(-1);
 		expect(quiz?.kind).toBe("quiz");
 		await learn.answer(quiz?.id as string, "a");
 		await tools.queue_gap?.execute({ topic: "eigenvalues" });
@@ -418,7 +425,7 @@ describe("routes and client messages", () => {
 		expect(detail.body).toMatchObject({
 			id: first.id,
 			messages: [],
-			questions: [],
+			questions: [expect.objectContaining({ kind: "ask" })],
 			planNodes: [],
 			sources: [],
 		});
@@ -604,10 +611,7 @@ describe("routes and client messages", () => {
 		const result = await call(feature, "POST", "/api/recap");
 		expect(result.status).toBe(200);
 		const cards = (result.body as { cards: Card[] }).cards;
-		expect(cards.map((card) => card.propositionId).sort()).toEqual([
-			"n_concept_mixed_precision",
-			"n_ga",
-		]);
+		expect(cards.map((card) => card.propositionId).sort()).toEqual(["n_ga"]);
 		expect(cards.every((card) => !card.question.includes("Sum grads"))).toBe(
 			true,
 		);
@@ -628,15 +632,24 @@ describe("routes and client messages", () => {
 		});
 		clock.advance(RECAP_IDLE_MS - 1);
 		await Bun.sleep(5);
-		expect(await learn.cards.cards()).toHaveLength(2);
+		expect(await learn.cards.cards()).toHaveLength(1);
 		clock.advance(1);
 		await Bun.sleep(20);
 		const all = await learn.cards.cards();
-		expect(all.map((card) => card.propositionId)).toContain("n_concept_warmup");
+		expect(all.map((card) => card.propositionId)).toEqual(["n_ga"]);
 		feature.stop?.();
 	});
 
 	test("recap uses the deep lane JSON output when not in fake mode", async () => {
+		services.graph = graphWith([
+			proposition("n_softmax", "softmax", "Softmax outputs sum to one"),
+			proposition(
+				"n_temp",
+				"temperature",
+				"Temperature controls sampling sharpness",
+			),
+			proposition("n_logits", "logits", "Logits are unnormalized scores"),
+		]);
 		const requests: unknown[] = [];
 		const llm: LlmPort = {
 			isCloud: false,

@@ -4,9 +4,11 @@ import { SourceRefSchema } from "../graph/contracts.ts";
 import { appendJsonLine, readJsonLines } from "../paths.ts";
 import type { Clock } from "../ports/clock.ts";
 import type { DecidePort } from "../ports/decide.ts";
+import { DECIDE_OPTIONS } from "../ports/decide.ts";
 import type { LlmPort } from "../ports/llm.ts";
 import type {
 	Card,
+	ClientMessage,
 	DaemonMessage,
 	LessonDetail,
 	MeasureLevel,
@@ -17,6 +19,12 @@ import type {
 import type { LearnService, Services } from "../services.ts";
 import { redact } from "../tutor/redact.ts";
 import { CardStore } from "./cards.ts";
+import {
+	ConceptNoteSchema,
+	CreateLessonSchema,
+	MeasureSchema,
+	QuestionSchema,
+} from "./contracts.ts";
 import {
 	type LessonRecord,
 	LessonStore,
@@ -43,6 +51,7 @@ export type LearnDeps = {
 	ports: { decide: DecidePort; llm: LlmPort; clock: Clock };
 	services: Services;
 	activity: ActivityRegistry;
+	dispatch?(message: ClientMessage): Promise<boolean>;
 };
 
 export type AskQuestionInput =
@@ -57,10 +66,7 @@ export type AskQuestionInput =
 	| { kind: "explain_back"; prompt: string; expectedPropositions: string[] };
 
 const isNote = (value: unknown): value is ConceptNote =>
-	typeof value === "object" &&
-	value !== null &&
-	typeof (value as ConceptNote).concept === "string" &&
-	typeof (value as ConceptNote).at === "string";
+	ConceptNoteSchema.safeParse(value).success;
 
 export function parseSourceRef(value: unknown): SourceRef {
 	const parsed = SourceRefSchema.safeParse(value);
@@ -94,10 +100,58 @@ export class Learn implements LearnService {
 		return this.deps.ports.clock;
 	}
 
-	#localOnly(record?: LessonRecord): boolean {
+	#sourceLocalOnly(ref: SourceRef): boolean {
 		const path =
-			record?.sessionPath ?? this.deps.services.sessions?.bound()?.path;
+			ref.kind === "session"
+				? (ref.file ?? ref.sessionId)
+				: ref.kind === "lesson"
+					? ref.lessonId
+					: ref.kind === "web"
+						? ref.url
+						: ref.path;
 		return this.deps.services.privacy?.isLocalOnly(path) ?? false;
+	}
+	#localOnly(record?: LessonRecord): boolean {
+		const privacy = this.deps.services.privacy;
+		return !!(
+			privacy?.isLocalOnly(
+				record?.sessionPath ?? this.deps.services.sessions?.bound()?.path,
+			) ||
+			privacy?.isLocalOnly(record?.id) ||
+			[...(record?.anchors ?? []), ...(record?.sources ?? [])].some((ref) =>
+				this.#sourceLocalOnly(ref),
+			)
+		);
+	}
+	#provenance(record: LessonRecord): SourceRef[] {
+		return [
+			...record.anchors,
+			...record.sources,
+			...(record.sessionPath
+				? [
+						{
+							kind: "session" as const,
+							harness: "auto",
+							sessionId: record.sessionPath,
+							file: record.sessionPath,
+						},
+					]
+				: []),
+		];
+	}
+	#extract(record: LessonRecord, flush = false): void {
+		this.deps.services.graph?.noteProse(
+			{
+				id: record.id,
+				label: record.title,
+				localOnly: this.#localOnly(record),
+				refs: this.#provenance(record),
+			},
+			record.messages
+				.filter((m) => m.role === "tutor")
+				.map(({ id, text }) => ({ id, text })),
+			{ flush },
+		);
 	}
 
 	#changed(): void {
@@ -130,6 +184,7 @@ export class Learn implements LearnService {
 		anchors?: SourceRef[];
 		sessionPath?: string;
 	}) {
+		CreateLessonSchema.parse(input);
 		const goal = input.goal.trim();
 		if (!goal) throw new Error("goal is required");
 		if (goal.length > MAX_GOAL)
@@ -153,7 +208,8 @@ export class Learn implements LearnService {
 			text: string;
 		},
 	): Promise<void> {
-		await this.lessons.appendMessage(lessonId, message);
+		const record = await this.lessons.appendMessage(lessonId, message);
+		if (message.role === "tutor") this.#extract(record);
 		this.#changed();
 	}
 
@@ -183,6 +239,12 @@ export class Learn implements LearnService {
 		levels: Record<string, MeasureLevel>,
 	): Promise<LessonDetail> {
 		return this.#mutate(lessonId, (record) => {
+			MeasureSchema.parse(levels);
+			const probes = record.questions.filter((q) => record.answers[q.id]);
+			if (probes.length < 3 || probes.length > 6)
+				throw new Error(
+					"Measure requires 3 to 6 answered probes before recording levels",
+				);
 			record.measure = { ...levels };
 		});
 	}
@@ -192,6 +254,8 @@ export class Learn implements LearnService {
 		const plan = planInit(mermaid);
 		if (!plan.ok) throw new Error(plan.errors.join("\n"));
 		return this.#mutate(lessonId, (record) => {
+			if (!record.measure)
+				throw new Error("Measure prerequisites before authoring a plan");
 			if (record.planMermaid)
 				throw new Error("this lesson already has a plan; it is authored once");
 			record.planMermaid = mermaid.trim();
@@ -235,7 +299,12 @@ export class Learn implements LearnService {
 				expectedPropositions: input.expectedPropositions,
 			};
 		} else question = { kind: "ask", id, prompt: input.prompt };
+		QuestionSchema.parse(question);
 		await this.#mutate(lessonId, (record) => {
+			if (!record.measure && record.questions.length >= 6)
+				throw new Error(
+					"Measure has six probes; record the results before continuing",
+				);
 			if (question.kind === "quiz" && question.planNode && record.planMermaid) {
 				const plan = planInit(record.planMermaid);
 				if (
@@ -254,6 +323,7 @@ export class Learn implements LearnService {
 		questionId: string,
 		value: string,
 	): Promise<{ correct?: boolean; verdict?: string } | undefined> {
+		if (!value.trim()) throw new Error("answer is required");
 		const lessons = await this.lessons.list();
 		const record = lessons.find(
 			(lesson) =>
@@ -262,15 +332,36 @@ export class Learn implements LearnService {
 		);
 		const question = record?.questions.find((item) => item.id === questionId);
 		if (!record || !question) return undefined;
+		const expected =
+			question.kind === "explain_back"
+				? await Promise.all(
+						question.expectedPropositions.map((id) =>
+							this.deps.services.graph?.get(id),
+						),
+					)
+				: [];
+		const expectedLocal = expected.some(
+			(node) =>
+				node &&
+				(this.deps.services.privacy?.isLocalOnly(node.birthSource) ||
+					node.sources.some((ref) => this.#sourceLocalOnly(ref))),
+		);
 		const result = await gradeAnswer(question, value, {
 			decide: this.deps.ports.decide,
 			graph: this.deps.services.graph,
-			localOnly: this.#localOnly(record),
+			localOnly: this.#localOnly(record) || expectedLocal,
 		});
 		let wroteAnswer = false;
 		await this.#mutate(record.id, (fresh) => {
 			if (fresh.answers[questionId]) return;
 			wroteAnswer = true;
+			fresh.messages.push({
+				id: this.lessons.newId("msg"),
+				at: new Date(this.#clock.now()).toISOString(),
+				role: "learner",
+				kind: "text",
+				text: value,
+			});
 			fresh.answers[questionId] = {
 				value,
 				...(result.correct !== undefined ? { correct: result.correct } : {}),
@@ -284,7 +375,10 @@ export class Learn implements LearnService {
 			verdictPassed(result.verdict)
 		) {
 			const propositionId = question.expectedPropositions[0];
-			if (propositionId) {
+			if (
+				propositionId &&
+				(await this.deps.services.graph?.get(propositionId))
+			) {
 				const card = await this.cards.create({
 					propositionId,
 					question: question.prompt,
@@ -309,6 +403,110 @@ export class Learn implements LearnService {
 		};
 	}
 
+	async fakeTurn(lessonId: string): Promise<Question | undefined> {
+		let record = await this.lessons.get(lessonId);
+		if (!record) return;
+		const pending = record.questions.find((q) => !record.answers[q.id]);
+		if (pending) {
+			this.deps.broadcast({ type: "question", lessonId, question: pending });
+			return pending;
+		}
+		if (!record.measure) {
+			if (record.questions.length < 3) {
+				const n = record.questions.length;
+				if (n === 1)
+					return this.askQuestion(lessonId, {
+						kind: "quiz",
+						prompt: "Which evidence shows that a consumer finished processing?",
+						options: [
+							{ id: "a", label: "The message was sent" },
+							{ id: "b", label: "The consumer acknowledges after processing" },
+						],
+						correctId: "b",
+					});
+				return this.askQuestion(lessonId, {
+					kind: "ask",
+					prompt:
+						n === 0
+							? "What do you already know about this topic?"
+							: "What prerequisite feels least familiar?",
+				});
+			}
+			await this.setMeasure(lessonId, {
+				foundations: "shaky",
+				application: "new",
+				reasoning: "new",
+			});
+			return;
+		}
+		if (!record.planMermaid) {
+			await this.setPlan(
+				lessonId,
+				"flowchart TD\nA[Foundations] --> B[Application]\nB --> C[Explain the reasoning]",
+			);
+			return;
+		}
+		record = await this.lessons.get(lessonId);
+		if (!record) return;
+		const current = toDetail(record).planNodes.find(
+			(n) => n.status === "current",
+		);
+		if (!current) {
+			if (record.questions.some((q) => q.kind === "explain_back")) return;
+			const [node] = (await this.deps.services.graph?.recent(1)) ?? [];
+			if (node)
+				return this.askQuestion(lessonId, {
+					kind: "explain_back",
+					prompt:
+						"Explain why acknowledging after processing protects a message.",
+					expectedPropositions: [node.id],
+				});
+			return;
+		}
+		return this.askQuestion(lessonId, {
+			kind: "quiz",
+			prompt: `Check ${current.label}: what does an acknowledgement establish?`,
+			options: [
+				{ id: "a", label: "The message was sent" },
+				{ id: "b", label: "The consumer handled the message" },
+			],
+			correctId: "b",
+			planNode: current.id,
+		});
+	}
+	async gradeVoice(cardId: string, text: string): Promise<ReviewRating> {
+		const card = await this.cards.get(cardId);
+		if (!card) throw new Error("unknown card");
+		const exact = text
+			.trim()
+			.toLowerCase()
+			.replace(/[.!?]+$/, "");
+		let rating: ReviewRating;
+		if (["again", "hard", "good", "easy"].includes(exact))
+			rating = exact as ReviewRating;
+		else {
+			const node = await this.deps.services.graph?.get(card.propositionId);
+			const localOnly =
+				this.#sourceLocalOnly(card.source) ||
+				!!(
+					node &&
+					(this.deps.services.privacy?.isLocalOnly(node.birthSource) ||
+						node.sources.some((ref) => this.#sourceLocalOnly(ref)))
+				);
+			const verdict = await this.deps.ports.decide.decide(
+				"explain_back",
+				redact(
+					`Prompt: ${card.question}\nLearner: ${text}\nExpected: ${node?.statement ?? card.propositionId}`,
+				),
+				DECIDE_OPTIONS.explain_back,
+				{ localOnly },
+			);
+			rating = verdictToRating(verdict.choice);
+		}
+		await this.grade(cardId, rating, "voice", text);
+		return rating;
+	}
+
 	/* ---- cards ---- */
 
 	dueCards(now?: number): Promise<Card[]> {
@@ -321,6 +519,11 @@ export class Learn implements LearnService {
 		example?: string;
 		source: SourceRef;
 	}): Promise<Card> {
+		if (
+			this.deps.services.graph &&
+			!(await this.deps.services.graph.get(input.propositionId))
+		)
+			throw new Error(`unknown proposition ${input.propositionId}`);
 		const card = await this.cards.create(input);
 		await this.broadcastDue();
 		return card;
@@ -348,9 +551,12 @@ export class Learn implements LearnService {
 		const note: ConceptNote = {
 			concept,
 			...(input.why ? { why: input.why.slice(0, 500) } : {}),
-			...(input.source ? { source: input.source } : {}),
+			source: input.source
+				? parseSourceRef(input.source)
+				: sessionSource(this.deps.services),
 			at: new Date(this.#clock.now()).toISOString(),
 		};
+		ConceptNoteSchema.parse(note);
 		await appendJsonLine(this.notesPath, note);
 	}
 
@@ -397,14 +603,17 @@ export class Learn implements LearnService {
 				job.finish("done");
 				return [];
 			}
+			if (record) this.#extract(record, true);
+			await this.deps.services.graph?.flush?.();
+			await this.deps.services.graph?.idle?.();
 			const llm = this.deps.ports.llm;
 			const blocked =
 				llm.isCloud &&
-				!(
-					this.deps.services.privacy?.allowCloud(
-						record?.sessionPath ?? this.deps.services.sessions?.bound()?.path,
-					) ?? true
-				);
+				(this.#localOnly(record) ||
+					notes.some(
+						(note) => note.source && this.#sourceLocalOnly(note.source),
+					));
+
 			let candidates = heuristicCandidates(notes);
 			if (!this.deps.fake && !blocked) {
 				let prompt = recapPrompt(notes, tutorMessages);
@@ -429,7 +638,7 @@ export class Learn implements LearnService {
 					candidate,
 					this.deps.services.graph,
 				);
-				if (existing.has(propositionId)) continue;
+				if (!propositionId || existing.has(propositionId)) continue;
 				existing.add(propositionId);
 				const note = notes.find(
 					(item) => item.concept === candidate.concept && item.source,
@@ -474,6 +683,7 @@ function sessionSource(services: Services): SourceRef {
 	return {
 		kind: "session",
 		harness: bound?.harness ?? "unknown",
+		...(bound?.path ? { file: bound.path } : {}),
 		sessionId: bound?.sessionId ?? bound?.path ?? "unknown",
 	};
 }

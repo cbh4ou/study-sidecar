@@ -1,10 +1,12 @@
+import { z } from "zod";
 import { type Feature, json, readBody } from "../feature.ts";
+import { SourceRefSchema } from "../graph/contracts.ts";
 import type { SessionEvent } from "../ingest/events.ts";
 import { DECIDE_OPTIONS } from "../ports/decide.ts";
-import type { Card, ClientMessage, SourceRef } from "../protocol.ts";
+import type { Card, ClientMessage } from "../protocol.ts";
 import type { GraphService } from "../services.ts";
-import { MAX_ANCHORS, MAX_GOAL } from "./lessons.ts";
-import { Learn, type LearnDeps, parseSourceRef } from "./service.ts";
+import { CreateLessonSchema } from "./contracts.ts";
+import { Learn, type LearnDeps } from "./service.ts";
 
 export const CARDS_DUE_INTERVAL_MS = 5 * 60_000;
 export const RECAP_IDLE_MS = 10 * 60_000;
@@ -65,9 +67,6 @@ export async function cardMatchesEdit(
 	);
 	return statementWords.filter((word) => words.has(word)).length >= 2;
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
 
 export type LearnFeature = Feature & { readonly service: Learn };
 
@@ -132,7 +131,12 @@ export function createLearnFeature(context: LearnDeps): LearnFeature {
 		switch (message.type) {
 			case "answer": {
 				try {
-					await service.answer(message.questionId, message.value);
+					const result = await service.answer(
+						message.questionId,
+						message.value,
+					);
+					const active = service.activeLessonId();
+					if (result && context.fake && active) await service.fakeTurn(active);
 				} catch (error) {
 					context.broadcast({
 						type: "error",
@@ -193,39 +197,28 @@ export function createLearnFeature(context: LearnDeps): LearnFeature {
 				if (request.method === "GET")
 					return json({ lessons: await service.listLessons() }, cors);
 				if (request.method === "POST") {
-					const body = await readBody(request);
-					if (!isRecord(body)) return fail("expected a JSON object");
-					if (typeof body.goal !== "string" || !body.goal.trim())
-						return fail("goal is required");
-					if (body.goal.trim().length > MAX_GOAL)
-						return fail(`goal must be at most ${MAX_GOAL} characters`);
-					if (body.title !== undefined && typeof body.title !== "string")
-						return fail("title must be a string");
-					if (
-						body.sessionPath !== undefined &&
-						typeof body.sessionPath !== "string"
-					)
-						return fail("sessionPath must be a string");
-					let anchors: SourceRef[] = [];
-					if (body.anchors !== undefined) {
-						if (!Array.isArray(body.anchors))
-							return fail("anchors must be an array");
-						if (body.anchors.length > MAX_ANCHORS)
-							return fail(`a lesson holds at most ${MAX_ANCHORS} anchors`);
-						try {
-							anchors = body.anchors.map(parseSourceRef);
-						} catch (error) {
-							return fail(
-								error instanceof Error ? error.message : "bad anchor",
-							);
-						}
-					}
+					const parsed = CreateLessonSchema.safeParse(await readBody(request));
+					if (!parsed.success)
+						return fail(parsed.error.issues[0]?.message ?? "invalid lesson");
+					const { anchor, anchors, ...body } = parsed.data;
 					const lesson = await service.createLesson({
-						goal: body.goal,
-						title: body.title as string | undefined,
-						anchors,
-						sessionPath: body.sessionPath as string | undefined,
+						...body,
+						anchors: anchors ?? (anchor ? [anchor] : []),
 					});
+					if (context.dispatch)
+						void context
+							.dispatch({
+								type: "question",
+								text: lesson.goal,
+								lessonId: lesson.id,
+							})
+							.catch((error) =>
+								context.broadcast({
+									type: "error",
+									message: `Could not start lesson: ${String(error)}`,
+								}),
+							);
+					else if (context.fake) await service.fakeTurn(lesson.id);
 					return json({ lesson }, cors);
 				}
 				return fail("method not allowed", 405);
@@ -246,7 +239,33 @@ export function createLearnFeature(context: LearnDeps): LearnFeature {
 					);
 				}
 			}
-			const match = /^\/api\/lessons\/([^/]+)(\/sources)?$/.exec(path);
+			const cardMatch = /^\/api\/cards\/([^/]+)\/answer$/.exec(path);
+			if (cardMatch?.[1]) {
+				if (request.method !== "POST") return fail("method not allowed", 405);
+				const parsed = z
+					.object({ text: z.string().trim().min(1).max(16000) })
+					.safeParse(await readBody(request));
+				if (!parsed.success) return fail("answer text is required");
+				try {
+					return json(
+						{
+							rating: await service.gradeVoice(
+								decodeURIComponent(cardMatch[1]),
+								parsed.data.text,
+							),
+						},
+						cors,
+					);
+				} catch (error) {
+					return fail(
+						error instanceof Error ? error.message : "could not grade",
+						400,
+					);
+				}
+			}
+			const match = /^\/api\/lessons\/([^/]+)(\/(?:sources|active))?$/.exec(
+				path,
+			);
 			if (!match?.[1]) return undefined;
 			const id = decodeURIComponent(match[1]);
 			if (!match[2]) {
@@ -256,10 +275,20 @@ export function createLearnFeature(context: LearnDeps): LearnFeature {
 			}
 			if (request.method !== "POST") return fail("method not allowed", 405);
 			if (!(await service.lesson(id))) return fail("lesson not found", 404);
-			const body = await readBody(request);
-			if (!isRecord(body)) return fail("expected a JSON object");
+			if (match[2] === "/active") {
+				service.setActiveLesson(id);
+				const detail = await service.lesson(id);
+				const question = detail?.questions.find((q) => !detail.answers[q.id]);
+				if (question)
+					context.broadcast({ type: "question", lessonId: id, question });
+				return json({ ok: true }, cors);
+			}
+			const parsed = z
+				.object({ source: SourceRefSchema })
+				.safeParse(await readBody(request));
+			if (!parsed.success) return fail("invalid source");
 			try {
-				return json(await service.addSource(id, body.source), cors);
+				return json(await service.addSource(id, parsed.data.source), cors);
 			} catch (error) {
 				return fail(error instanceof Error ? error.message : "bad source");
 			}

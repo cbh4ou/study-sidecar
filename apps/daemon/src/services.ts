@@ -16,6 +16,8 @@ import type {
 
 /** Implemented by the graph feature (graph/). */
 export interface GraphService {
+	flush?(): Promise<void>;
+	idle?(): Promise<void>;
 	snapshot(): Promise<GraphSnapshot>;
 	/** Keyword/FTS search over name, aliases, statement. */
 	search(text: string, limit?: number): Promise<Proposition[]>;
@@ -29,7 +31,12 @@ export interface GraphService {
 	 * sources when the extractor is a cloud model.
 	 */
 	noteProse(
-		source: { id: string; label: string; localOnly?: boolean },
+		source: {
+			id: string;
+			label: string;
+			localOnly?: boolean;
+			refs?: SourceRef[];
+		},
 		messages: Array<{ id: string; text: string }>,
 		opts?: { flush?: boolean },
 	): void;
@@ -37,6 +44,9 @@ export interface GraphService {
 
 /** Implemented by the learn feature (learn/). */
 export interface LearnService {
+	fakeTurn?(
+		lessonId: string,
+	): Promise<import("./protocol.ts").Question | undefined>;
 	/** The lesson the learner is currently in (Classroom open or last used). */
 	activeLessonId(): string | undefined;
 	setActiveLesson(id: string | undefined): void;
