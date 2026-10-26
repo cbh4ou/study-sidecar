@@ -1,4 +1,5 @@
-import { type Stats, stat } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import { stat } from "node:fs/promises";
 import {
 	detectAntipatterns,
 	diffExcerpt,

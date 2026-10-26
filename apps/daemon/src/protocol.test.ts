@@ -65,7 +65,7 @@ describe("parseDaemonMessage", () => {
 			{ type: "error", message: "frame too large" },
 		];
 		for (const message of valid)
-			expect(parseDaemonMessage(message)).toBe(message);
+			expect(parseDaemonMessage(message) as unknown).toBe(message);
 	});
 
 	test("rejects malformed values", () => {

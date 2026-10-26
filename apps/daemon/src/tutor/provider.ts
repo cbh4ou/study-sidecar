@@ -35,7 +35,9 @@ export async function loadPiRegistry(
 	const models = new Map<string, PiModel>();
 	for (const entry of Object.values(store as Record<string, unknown>)) {
 		if (!entry || typeof entry !== "object") continue;
-		for (const model of (entry as { models?: unknown }).models ?? []) {
+		for (const model of ((entry as { models?: unknown }).models as
+			| unknown[]
+			| undefined) ?? []) {
 			if (!model || typeof model !== "object") continue;
 			const data = model as Record<string, unknown>;
 			if (

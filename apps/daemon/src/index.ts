@@ -1,3 +1,6 @@
+import type { ServerWebSocket } from "bun";
+import { ActivityRegistry } from "./activity.ts";
+import { createPorts } from "./adapters/index.ts";
 import {
 	corsHeaders,
 	DEFAULT_PORT,
@@ -6,6 +9,8 @@ import {
 	requestToken,
 	tokenEquals,
 } from "./auth.ts";
+import type { DaemonContext, Feature } from "./feature.ts";
+import { createFeatures } from "./features.ts";
 import type { SessionEvent, SessionInfo } from "./ingest/events.ts";
 import {
 	type Harness,
@@ -14,7 +19,13 @@ import {
 } from "./ingest/manager.ts";
 import { OKFStore } from "./memory/okf-store.ts";
 import { loadModes } from "./modes/modes.ts";
-import type { DaemonMessage, TutorDocuments } from "./protocol.ts";
+import { sidecarHome } from "./paths.ts";
+import {
+	type DaemonMessage,
+	parseClientMessage,
+	type TutorDocuments,
+} from "./protocol.ts";
+import { SettingsStore } from "./settings.ts";
 import { TutorEngine, type TutorMessage } from "./tutor/engine.ts";
 import { saveTutorModel, selectTutorModel } from "./tutor/model-selection.ts";
 import {
@@ -33,6 +44,11 @@ const harness = option("--harness", "auto") as Harness;
 const port = Number(option("--port", String(DEFAULT_PORT)));
 const deadAirSeconds = Number(option("--dead-air-seconds", "15"));
 const home = process.env.HOME ?? "";
+const fake = args.includes("--fake") || process.env.SIDECAR_FAKE === "1";
+if (fake) process.env.SIDECAR_FAKE = "1";
+const root = sidecarHome(home);
+const settings = new SettingsStore(root);
+await settings.load();
 const selection = await selectTutorModel(
 	home,
 	option("--model", process.env.SIDECAR_MODEL ?? "") || undefined,
@@ -87,11 +103,43 @@ const tutor = new TutorEngine(
 	},
 	{ deadAirSeconds, modelSlug: modelSlug ?? "" },
 );
+const activity = new ActivityRegistry((jobs) =>
+	broadcast({ type: "activity", jobs }),
+);
+const context: DaemonContext = {
+	home,
+	root,
+	fake,
+	broadcast,
+	ports: await createPorts({
+		home,
+		root,
+		fake,
+		settings,
+		modelSlug: modelSlug ?? undefined,
+	}),
+	settings,
+	activity,
+	services: {},
+	tutor,
+	events: () => events,
+	session: () => session,
+	watchedPath: () => watched,
+	ingestEvent: (event) => addEvent(event),
+};
+const features: Feature[] = createFeatures(context);
 function addEvent(event: SessionEvent): void {
 	events.push(event);
 	if (events.length > 100) events.shift();
 	broadcast({ type: "new_event", event });
 	tutor.observe(event);
+	for (const feature of features) {
+		try {
+			feature.onEvent?.(event);
+		} catch (error) {
+			console.error(`feature ${feature.name} onEvent failed:`, error);
+		}
+	}
 }
 function setSession(next: SessionInfo): void {
 	session = next;
@@ -112,7 +160,7 @@ const json = (
 	status = 200,
 ) => Response.json(data, { status, headers });
 
-const server = Bun.serve({
+const server = Bun.serve<SocketData>({
 	port,
 	hostname: "127.0.0.1",
 	async fetch(request, server) {
@@ -268,12 +316,17 @@ const server = Bun.serve({
 			);
 			return json({ path }, cors);
 		}
+		for (const feature of features) {
+			const response = await feature.route?.(request, url, cors);
+			if (response) return response;
+		}
 		return json({ error: "not found" }, cors, 404);
 	},
 	websocket: {
 		open(socket) {
-			if (socket.data.kind === "voice") {
-				void createVoiceBridge(socket.data.engine, {
+			const voice = socket.data;
+			if (voice.kind === "voice") {
+				void createVoiceBridge(voice.engine, {
 					onEvent: (event) => socket.send(JSON.stringify(event)),
 					onError: (error) =>
 						socket.send(
@@ -285,12 +338,12 @@ const server = Bun.serve({
 							bridge.close();
 							return;
 						}
-						socket.data.bridge = bridge;
+						voice.bridge = bridge;
 						socket.send(
 							JSON.stringify({
 								type: "ready",
-								vad: socket.data.engine.kind,
-								tts: socket.data.engine.kind,
+								vad: voice.engine.kind,
+								tts: voice.engine.kind,
 							}),
 						);
 					})
@@ -331,6 +384,9 @@ const server = Bun.serve({
 			);
 			if (documents)
 				socket.send(JSON.stringify({ type: "tutor_documents", documents }));
+			socket.send(JSON.stringify({ type: "activity", jobs: activity.list() }));
+			for (const feature of features)
+				feature.onConnect?.((message) => socket.send(JSON.stringify(message)));
 		},
 		async message(socket, value) {
 			if (typeof value !== "string") return; // binary frames are ignored
@@ -373,7 +429,26 @@ const server = Bun.serve({
 				return;
 			}
 			try {
-				const incoming: unknown = JSON.parse(value);
+				const parsed = parseClientMessage(JSON.parse(value));
+				if (!parsed) return;
+				let handled = false;
+				if (parsed.type === "abort_job") {
+					activity.abort(parsed.jobId);
+					handled = true;
+				}
+				for (const feature of features) {
+					try {
+						if (await feature.onClientMessage?.(parsed)) handled = true;
+					} catch (error) {
+						broadcast({
+							type: "daemon_error",
+							scope: "provider",
+							message: `${feature.name}: ${error instanceof Error ? error.message : String(error)}`,
+						});
+					}
+				}
+				if (handled) return;
+				const incoming: unknown = parsed;
 				if (
 					!incoming ||
 					typeof incoming !== "object" ||
@@ -443,14 +518,21 @@ const ingest = new IngestManager(
 	{ harness, directories, durableUrl: process.env.DURABLE_URL },
 );
 ingest.start();
+for (const feature of features) {
+	try {
+		await feature.start?.();
+	} catch (error) {
+		console.error(`feature ${feature.name} failed to start:`, error);
+	}
+}
 
 // Close the durable harness on shutdown: a SIGKILL mid-commit is what leaves
 // an unresumable task that replays duplicate entry IDs on the next open.
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
 	process.once(signal, () => {
 		const stop = () => process.exit(0);
-		void tutor
-			.close()
+		void Promise.allSettled(features.map((feature) => feature.stop?.()))
+			.then(() => tutor.close())
 			.catch(() => undefined)
 			.then(stop, stop);
 	});

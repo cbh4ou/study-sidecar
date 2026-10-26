@@ -1,6 +1,8 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import type { Timer } from "node:timers";
+
+type Timer = ReturnType<typeof setTimeout>;
+
 import type { SessionEvent, SessionInfo } from "./events.ts";
 import { normalizeClaudeRecord, normalizeCodexRecord } from "./harness.ts";
 import { superviseDurableSession } from "./pi-durable.ts";

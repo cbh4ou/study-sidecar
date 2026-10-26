@@ -1,4 +1,5 @@
-import type { Timer } from "node:timers";
+type Timer = ReturnType<typeof setTimeout>;
+
 import type { SessionEvent } from "../ingest/events.ts";
 import type { TutorMode } from "../modes/modes.ts";
 

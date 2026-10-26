@@ -155,7 +155,7 @@ export function realtimeOutputEvents(
 				type: "tts_stopped",
 				id,
 				reason:
-					object(message.response)?.status === "cancelled"
+					object(message?.response)?.status === "cancelled"
 						? "interrupted"
 						: "complete",
 			},
@@ -177,7 +177,7 @@ function localOutputEvents(value: unknown): VoiceEvent[] {
 	if (type === "tts_audio" && id && typeof message?.pcm_b16 === "string")
 		return [{ type, id, pcm_b16: message.pcm_b16 }];
 	if (type === "tts_stopped" && id)
-		return [{ type, id, reason: string(message.reason) }];
+		return [{ type, id, reason: string(message?.reason) }];
 	return [];
 }
 
@@ -188,7 +188,9 @@ async function connect(
 ): Promise<WebSocket> {
 	let socket: WebSocket;
 	try {
-		socket = headers ? new WebSocket(url, { headers }) : new WebSocket(url);
+		socket = headers
+			? new WebSocket(url, { headers } as unknown as string[])
+			: new WebSocket(url);
 	} catch (error) {
 		throw new VoiceBridgeError(
 			`Voice connection failed: ${error instanceof Error ? error.message : String(error)}`,

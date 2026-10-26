@@ -61,6 +61,52 @@ function authToken(): Promise<string> {
 	return tokenPromise;
 }
 
+const messageListeners = new Set<(message: DaemonMessage) => void>();
+
+/** Subscribe to every parsed daemon message; returns an unsubscribe. */
+export function onDaemonMessage(
+	listener: (message: DaemonMessage) => void,
+): () => void {
+	messageListeners.add(listener);
+	return () => messageListeners.delete(listener);
+}
+
+/** Authenticated daemon REST call; throws on non-2xx. */
+export async function daemonRequest<T>(
+	path: string,
+	init: { method?: string; body?: unknown } = {},
+): Promise<T> {
+	const token = await authToken();
+	const response = await fetch(`${daemonUrl}${path}`, {
+		method: init.method ?? "GET",
+		headers: {
+			...(init.body === undefined
+				? {}
+				: { "Content-Type": "application/json" }),
+			...(token ? { Authorization: `Bearer ${token}` } : {}),
+		},
+		body: init.body === undefined ? undefined : JSON.stringify(init.body),
+	});
+	const unauthorized = mapStatusToConnection(response.status);
+	if (unauthorized) {
+		connection = unauthorized;
+		notify();
+		throw new Error(`Daemon rejected the desktop token (${response.status})`);
+	}
+	if (!response.ok) {
+		let detail = "";
+		try {
+			detail = ((await response.json()) as { error?: string }).error ?? "";
+		} catch {
+			// non-JSON error body
+		}
+		throw new Error(
+			`Daemon request failed (${response.status})${detail ? `: ${detail}` : ""}`,
+		);
+	}
+	return response.json() as Promise<T>;
+}
+
 async function daemonJson<T>(path: string): Promise<T> {
 	const token = await authToken();
 	const response = await fetch(`${daemonUrl}${path}`, {
@@ -281,6 +327,13 @@ async function connect(): Promise<void> {
 		if (!message) return;
 		messages = [...messages, message].slice(-100);
 		update(reduceDaemonMessage(state, message));
+		for (const listener of messageListeners) {
+			try {
+				listener(message);
+			} catch {
+				// a faulty listener never breaks the socket loop
+			}
+		}
 	};
 	current.onclose = () => {
 		if (socket !== current || !subscribers.size) return;
