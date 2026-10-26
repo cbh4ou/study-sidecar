@@ -42,6 +42,8 @@ async function harness(
 	home: string,
 	options: {
 		cwd?: string;
+		sourceScope?: string;
+		allowCloud?: (path?: string) => boolean;
 		onDocuments?: (documents: TutorDocuments) => void;
 	} = {},
 ) {
@@ -61,6 +63,8 @@ async function harness(
 		tutorProvider: { provider: faux.provider, modelId: "tutor-test" },
 		retryMaxRetries: 0,
 		onDocuments: options.onDocuments,
+		sourceScope: options.sourceScope,
+		allowCloud: options.allowCloud,
 	});
 	return { tutor, faux, memory };
 }
@@ -219,6 +223,43 @@ describe("tutor durable harness", () => {
 			tutor.converse("second question"),
 		]);
 		expect(answers).toEqual(["first answer", "second answer"]);
+		await tutor.close();
+	});
+	test("source scopes isolate and restore durable documents", async () => {
+		const home = await mkdtemp("/tmp/sidecar-scopes-");
+		temporary.push(home);
+		const first = await harness(home, { sourceScope: "private-session" });
+		await first.tutor.updateDocuments({
+			scratchpad_diagram: { diagram: "flowchart LR\nA[Private]-->B[First]" },
+		});
+		await first.tutor.close();
+		let other: TutorDocuments | undefined;
+		const second = await harness(home, {
+			sourceScope: "public-session",
+			onDocuments: (d) => {
+				other = d;
+			},
+		});
+		expect(other?.scratchpad_diagram.diagram).toBe("");
+		await second.tutor.close();
+		let restored: TutorDocuments | undefined;
+		const third = await harness(home, {
+			sourceScope: "private-session",
+			onDocuments: (d) => {
+				restored = d;
+			},
+		});
+		expect(restored?.scratchpad_diagram.diagram).toContain("Private");
+		await third.tutor.close();
+	});
+	test("cloud gate rejects before a model request", async () => {
+		const home = await mkdtemp("/tmp/sidecar-cloudgate-");
+		temporary.push(home);
+		const { tutor, faux } = await harness(home, { allowCloud: () => false });
+		faux.setResponses([fauxAssistantMessage("must never be used")]);
+		await expect(tutor.converse("private contents")).rejects.toThrow(
+			"local only",
+		);
 		await tutor.close();
 	});
 });

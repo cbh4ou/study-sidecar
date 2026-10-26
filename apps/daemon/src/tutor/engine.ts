@@ -99,6 +99,8 @@ export class TutorEngine {
 	#lastSpoke = 0;
 	#tutor?: TutorHarness;
 	#opening?: Promise<TutorHarness>;
+	#openedScope?: string;
+	#cancelling: Promise<void> = Promise.resolve();
 	#modelSlug: string;
 	#lastProviderError = 0;
 	#providerBackoffUntil = 0;
@@ -118,6 +120,8 @@ export class TutorEngine {
 			modelSlug?: string;
 			openHarness?: typeof openTutorHarness;
 			extraTools?: () => ToolSpec[];
+			allowCloud?: (path?: string) => boolean;
+			sourceScope?: () => string;
 		} = {},
 	) {
 		this.#tutor = options.harness;
@@ -162,7 +166,7 @@ export class TutorEngine {
 		this.#events.push(event);
 		if (this.#events.length > 100) this.#events.shift();
 		this.#deadAir.cancel();
-		if (this.hydrating) return;
+		if (this.hydrating || this.options.allowCloud?.() === false) return;
 		const tool = event.tool_name?.toLowerCase();
 		if (event.event_type === "tool_call" && tool === "bash")
 			this.#deadAir.touch(event.details);
@@ -239,6 +243,12 @@ export class TutorEngine {
 		});
 		await this.#steer(`Q: ${question}\nA: ${answer.slice(0, 600)}`);
 		return answer;
+	}
+
+	interrupt(): void {
+		this.#cancelling = (this.#tutor?.abort?.() ?? Promise.resolve()).catch(
+			() => undefined,
+		);
 	}
 
 	async close(): Promise<void> {
@@ -367,6 +377,9 @@ export class TutorEngine {
 	}
 
 	async #generate(prompt: string): Promise<string> {
+		await this.#cancelling;
+		if (this.options.allowCloud?.() === false)
+			throw new Error("This source is local only.");
 		try {
 			const answer = await (await this.#tutorHandle()).converse(prompt);
 			return answer;
@@ -384,6 +397,9 @@ export class TutorEngine {
 	}
 
 	async #tutorHandle(): Promise<TutorHarness> {
+		const sourceScope = this.options.sourceScope?.();
+		if (this.#tutor && sourceScope !== this.#openedScope) await this.close();
+		this.#openedScope = sourceScope;
 		if (this.#tutor) return this.#tutor;
 		this.#opening ??= (this.options.openHarness ?? openTutorHarness)({
 			home: this.options.home ?? process.env.HOME ?? "",
@@ -396,6 +412,8 @@ export class TutorEngine {
 			onDocuments: (documents) =>
 				this.emit({ type: "tutor_documents", documents }),
 			extraTools: this.options.extraTools,
+			allowCloud: this.options.allowCloud,
+			sourceScope,
 		});
 		try {
 			this.#tutor = await this.#opening;

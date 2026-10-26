@@ -18,6 +18,7 @@ export type MemoryHit = {
 	bundle: "learner" | "repo";
 	title: string;
 	preview: string;
+	sourceSessions?: string[];
 };
 type RankedHit = { score: number; hit: MemoryHit };
 const singleLine = (value: string) =>
@@ -39,7 +40,7 @@ const slugify = (value: string) =>
 const decoder = new TextDecoder();
 
 async function atomicWrite(path: string, content: string): Promise<void> {
-	const temp = `${path}.${process.pid}.${Date.now()}.tmp`;
+	const temp = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
 	const file = await open(temp, "w", 0o600);
 	try {
 		await file.writeFile(content);
@@ -93,11 +94,17 @@ export class OKFStore {
 		const now = new Date();
 		let prior = "";
 		let priorSourceSession: string | undefined;
+		let priorSources: string[] = [];
 		let priorToolUse: string | undefined;
 		try {
 			const [oldFields, oldBody] = parseFrontmatter(
 				await readFile(target, "utf8"),
 			);
+			priorSources = Array.isArray(oldFields.source_sessions)
+				? oldFields.source_sessions.filter(
+						(value): value is string => typeof value === "string",
+					)
+				: [];
 			prior = oldBody.replace(/^\s*# [^\n]*(?:\n|$)/, "").trim();
 			priorSourceSession =
 				typeof oldFields.source_session === "string"
@@ -127,7 +134,14 @@ export class OKFStore {
 			sourceSession === "unknown"
 				? (priorSourceSession ?? sourceSession)
 				: sourceSession;
-		const frontmatter = `---\ntype: concept\nid: concepts/${slug}\ntitle: ${yamlScalar(title)}\ntopics: [${safeTopics.join(", ")}]\ntrust: practicing\nmastery: learning\nsource_session: ${yamlScalar(singleLine(effectiveSourceSession) || "unknown")}${sourceToolUse ? `\nsource_tool_use: ${yamlScalar(singleLine(sourceToolUse))}` : ""}\nupdated_at: ${updated}\nstale_after: ${stale}\n---\n`;
+		const sourceSessions = [
+			...new Set([
+				...priorSources,
+				...(priorSourceSession ? [priorSourceSession] : []),
+				effectiveSourceSession,
+			]),
+		];
+		const frontmatter = `---\ntype: concept\nid: concepts/${slug}\ntitle: ${yamlScalar(title)}\ntopics: [${safeTopics.join(", ")}]\ntrust: practicing\nmastery: learning\nsource_session: ${yamlScalar(singleLine(effectiveSourceSession) || "unknown")}${sourceToolUse ? `\nsource_tool_use: ${yamlScalar(singleLine(sourceToolUse))}` : ""}\nsource_sessions: ${JSON.stringify(sourceSessions)}\nupdated_at: ${updated}\nstale_after: ${stale}\n---\n`;
 		await mkdir(this.root, { recursive: true, mode: 0o700 });
 		await chmod(this.root, 0o700);
 		await mkdir(concepts, { recursive: true, mode: 0o700 });
@@ -137,10 +151,18 @@ export class OKFStore {
 		return target;
 	}
 
-	async query(text: string, repoRoot?: string): Promise<MemoryHit[]> {
+	async query(
+		text: string,
+		repoRoot?: string,
+		allowSource?: (source: string) => boolean,
+	): Promise<MemoryHit[]> {
 		const learner = await this.queryBundle(text, this.root, "learner");
 		const repo = repoRoot ? await this.queryBundle(text, repoRoot, "repo") : [];
 		return [...repo, ...learner]
+			.filter(
+				({ hit }) =>
+					!allowSource || (hit.sourceSessions ?? []).every(allowSource),
+			)
 			.sort(
 				(left, right) =>
 					right.score - left.score ||
@@ -215,6 +237,13 @@ export class OKFStore {
 						bundle,
 						title: String(fields.title ?? name.replace(/\.md$/, "")),
 						preview,
+						sourceSessions: Array.isArray(fields.source_sessions)
+							? fields.source_sessions.filter(
+									(value): value is string => typeof value === "string",
+								)
+							: typeof fields.source_session === "string"
+								? [fields.source_session]
+								: [],
 					},
 				});
 		}

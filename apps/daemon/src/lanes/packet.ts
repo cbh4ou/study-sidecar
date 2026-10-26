@@ -358,7 +358,38 @@ export class PacketWarmer {
 		const lessonLines: string[] = [];
 		const anchors: Array<{ path: string; text: string }> = [];
 		if (lesson) {
-			lessonLines.push(`Lesson: ${lesson.title} (goal: ${lesson.goal})`);
+			lessonLines.push(
+				`Phase: ${lesson.phase}. Lesson: ${lesson.title.slice(0, 80)} (goal: ${lesson.goal.slice(0, 160)})`,
+			);
+			const latestReasoning = [...lesson.messages]
+				.reverse()
+				.find((message) => message.role === "learner");
+			if (latestReasoning)
+				lessonLines.push(
+					`Latest learner reasoning: ${latestReasoning.text.slice(0, 300)}`,
+				);
+			const recentAnswers = Object.entries(lesson.answers)
+				.slice(-1)
+				.map(([id, answer]) => {
+					const question = lesson.questions.find((q) => q.id === id);
+					const value =
+						question?.kind === "quiz"
+							? (question.options.find((option) => option.id === answer.value)
+									?.label ?? answer.value)
+							: answer.value;
+					return `${question?.prompt.slice(0, 100) ?? id}: ${value.slice(0, 150)} (${answer.verdict ?? (answer.correct === undefined ? "ungraded" : answer.correct ? "correct" : "incorrect")})`;
+				});
+			if (recentAnswers.length)
+				lessonLines.push(`Recent answers: ${recentAnswers.join("; ")}`);
+			if (lesson.measure)
+				lessonLines.push(`Measure: ${JSON.stringify(lesson.measure)}`);
+			if (lesson.sources.length || lesson.anchors.length)
+				lessonLines.push(
+					`Sources (use read tools): ${[...lesson.anchors, ...lesson.sources]
+						.slice(-4)
+						.map((source) => JSON.stringify(source))
+						.join("; ")}`,
+				);
 			const current = lesson.planNodes.find(
 				(node) => node.status === "current",
 			);

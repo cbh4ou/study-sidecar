@@ -98,7 +98,23 @@ export function createDeepTools(context: DaemonContext): ToolSpec[] {
 			throw new Error("Research is unavailable for a local-only source.");
 		const lessonId = context.services.learn?.activeLessonId(),
 			job = context.activity.start("research", label);
-		void work(job.signal)
+		const deferred = async () => {
+			if (context.fake)
+				await new Promise<void>((resolve, reject) => {
+					const timer = context.ports.clock.setTimeout(resolve, 400);
+					job.signal.addEventListener(
+						"abort",
+						() => {
+							context.ports.clock.clearTimeout(timer);
+							reject(new Error("Research stopped"));
+						},
+						{ once: true },
+					);
+				});
+			if (job.signal.aborted) throw new Error("Research stopped");
+			return work(job.signal);
+		};
+		void deferred()
 			.then(async ({ text, sources }) => {
 				if (job.signal.aborted) return;
 				if (lessonId) {

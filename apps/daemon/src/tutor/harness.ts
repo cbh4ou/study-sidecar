@@ -15,7 +15,9 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import { createModels, createProvider } from "@earendil-works/pi-ai/models";
 import {
 	AssistantEntry,
+	type ConversationId,
 	createRegistry,
+	defineDoc,
 	defineExtension,
 	defineTool,
 	Harness,
@@ -41,6 +43,12 @@ import { loadPiRegistry, piCredential, TutorModelError } from "./provider.ts";
 import { redact } from "./redact.ts";
 
 const context = BACKGROUND_CONTEXT;
+const ScopeDoc = defineDoc<{ ids: Record<string, number> }>({
+	kind: "study.source_scopes",
+	version: 1,
+	scope: "session",
+	initial: () => ({ ids: {} }),
+});
 const TUTOR_PROVIDER_ID = "sidecar";
 const BASE_SYSTEM =
 	"You are Sidecar Tutor, a senior architect and mentor. Explain what the coding agent is doing and why in concise 2-4 sentence educational answers. Use third person. Do not output full code replacements.";
@@ -54,6 +62,7 @@ export type TutorHarness = {
 	converse(prompt: string): Promise<string>;
 	updateDocuments(patch: TutorDocumentPatch): Promise<void>;
 	close(): Promise<void>;
+	abort?(): Promise<void>;
 };
 
 export type TutorHarnessOptions = {
@@ -71,6 +80,8 @@ export type TutorHarnessOptions = {
 	onReport?: (message: string) => void;
 	/** Deep-lane tools contributed by daemon features (graph, learn, research). */
 	extraTools?: () => ToolSpec[];
+	allowCloud?: (path?: string) => boolean;
+	sourceScope?: string;
 };
 
 const slug = (value: string) =>
@@ -191,6 +202,8 @@ export async function openTutorHarness(
 		const prefix = repo.endsWith(sep) ? repo : `${repo}${sep}`;
 		if (!path.startsWith(prefix))
 			throw new Error("requested file is outside the watched repository");
+		if (options.allowCloud?.(path) === false)
+			throw new Error("Source is local only");
 		const file = await open(path, "r");
 		try {
 			const info = await file.stat();
@@ -248,7 +261,11 @@ export async function openTutorHarness(
 				return `### Active Study Mode: ${mode.title}\n${mode.prompt}`;
 			}),
 			section("session-context", async () => {
-				const events = options.events().slice(-10);
+				if (options.allowCloud?.() === false) return "Source is local only.";
+				const events = options
+					.events()
+					.filter((event) => options.allowCloud?.(event.session_file) !== false)
+					.slice(-10);
 				const lines = events.map(
 					(event) =>
 						`- ${event.headline}: ${redact(event.details.slice(0, 400))}`,
@@ -259,7 +276,9 @@ export async function openTutorHarness(
 					.join(" ")
 					.slice(0, 300);
 				const repo = await findRepoOkf(options.sessionCwd());
-				const cards = query ? await memory.query(query, repo) : [];
+				const cards = query
+					? await memory.query(query, repo, options.allowCloud)
+					: [];
 				if (cards.length)
 					lines.push(
 						"### Existing Concept Notes",
@@ -282,7 +301,7 @@ export async function openTutorHarness(
 					const path = String(args.path);
 					const text = await watchedFile(path);
 					await recordTool("Read watched repository", path);
-					return { output: [{ type: "text", text }] };
+					return { output: [{ type: "text", text: redact(text) }] };
 				},
 			}),
 			defineTool({
@@ -298,10 +317,10 @@ export async function openTutorHarness(
 					if (args.notebooklm) {
 						const answer = await queryNotebookLm(query);
 						await recordTool("Queried NotebookLM", query);
-						return { output: [{ type: "text", text: answer }] };
+						return { output: [{ type: "text", text: redact(answer) }] };
 					}
 					const repo = await findRepoOkf(options.sessionCwd());
-					const hits = await memory.query(query, repo);
+					const hits = await memory.query(query, repo, options.allowCloud);
 					await recordTool("Searched OKF memory", query);
 					return {
 						output: [
@@ -309,9 +328,8 @@ export async function openTutorHarness(
 								type: "text",
 								text: hits.length
 									? hits
-											.map(
-												(hit) =>
-													`- ${hit.bundle}: ${hit.title}: ${hit.preview}`,
+											.map((hit) =>
+												redact(`- ${hit.bundle}: ${hit.title}: ${hit.preview}`),
 											)
 											.join("\n")
 									: "no matching concept cards",
@@ -449,7 +467,7 @@ export async function openTutorHarness(
 					execute: async (args) => {
 						const text = await spec.execute(args as Record<string, unknown>);
 						await recordTool(spec.name, text.slice(0, 120));
-						return { output: [{ type: "text", text }] };
+						return { output: [{ type: "text", text: redact(text) }] };
 					},
 				}),
 			),
@@ -482,7 +500,7 @@ export async function openTutorHarness(
 	);
 	await chmod(storagePath, 0o600).catch(() => undefined);
 	harness.resume();
-	const conversation = await harness.root(context, {
+	const initOptions: NonNullable<Parameters<typeof harness.root>[1]> = {
 		agent: { model: { provider: TUTOR_PROVIDER_ID, modelId } },
 		init: async (tx, conversationId) => {
 			const hud = await tx.doc(HudStateDoc, conversationId);
@@ -493,7 +511,31 @@ export async function openTutorHarness(
 			await tx.doc(ResearchScratchpadDoc, conversationId);
 			await tx.doc(TutorTraceDoc, conversationId);
 		},
-	});
+	};
+	const scopeKey = options.sourceScope
+		? new Bun.CryptoHasher("sha256").update(options.sourceScope).digest("hex")
+		: undefined;
+	const storedId = scopeKey
+		? await harness.commit(
+				async (tx) => (await tx.doc(ScopeDoc)).ids[scopeKey],
+				context,
+			)
+		: undefined;
+	const existing = storedId
+		? await harness.conversation(storedId as ConversationId, context)
+		: undefined;
+	const conversation =
+		existing ??
+		(scopeKey
+			? await harness.createConversation(
+					{ ownership: { kind: "ownerless" }, ...initOptions },
+					context,
+				)
+			: await harness.root(context, initOptions));
+	if (scopeKey && !existing)
+		await harness.commit(async (tx) => {
+			(await tx.doc(ScopeDoc)).ids[scopeKey] = conversation.id;
+		}, context);
 	// The root conversation persists its agent across restarts; re-point it at
 	// the model this process selected, or generation settles no_model.
 	const resolved = await conversation.agent(context);
@@ -639,7 +681,10 @@ export async function openTutorHarness(
 	publish();
 
 	return {
+		abort: () => conversation.abort(context),
 		async converse(prompt: string): Promise<string> {
+			if (options.allowCloud?.() === false)
+				throw new Error("Source is local only");
 			const settled = await (
 				await conversation.submit(
 					{ type: "input", content: redact(prompt) },

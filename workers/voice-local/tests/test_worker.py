@@ -149,7 +149,7 @@ def test_guarded_import_fallbacks_report_capabilities(monkeypatch: pytest.Monkey
     asyncio.run(check())
 
 
-def test_ready_lists_importable_engines(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ready_lists_implemented_engines(monkeypatch: pytest.MonkeyPatch) -> None:
     async def check() -> None:
         monkeypatch.setattr(server, "SileroModel", None)
         monkeypatch.setattr(server, "WhisperModel", object)
@@ -165,7 +165,7 @@ def test_ready_lists_importable_engines(monkeypatch: pytest.MonkeyPatch) -> None
                 "type": "ready",
                 "vad": "energy",
                 "tts": "kokoro",
-                "engines": {"stt": ["faster-whisper", "parakeet"], "tts": ["kokoro", "piper"]},
+                "engines": {"stt": ["faster-whisper"], "tts": ["kokoro"]},
             }
         ]
 
@@ -593,3 +593,16 @@ def test_voice_token_generates_and_prints_when_env_missing(
     token = server.voice_token()
     output = capsys.readouterr().out
     assert output == f"voice token: {token}\n"
+
+
+def test_configure_rejects_unimplemented_engine(monkeypatch):
+    async def check():
+        monkeypatch.setattr(server, "WhisperModel", object)
+        monkeypatch.setattr(server, "Kokoro", FakeKokoro)
+        socket = Socket()
+        session = server.VoiceSession(server.VoiceWorker(), socket)
+        await session.handle({"type": "configure", "stt": "faster-whisper", "tts": "kokoro"})
+        assert socket.messages[-1]["type"] == "ready"
+        await session.handle({"type": "configure", "stt": "unimplemented"})
+        assert socket.messages[-1]["type"] == "error"
+    asyncio.run(check())

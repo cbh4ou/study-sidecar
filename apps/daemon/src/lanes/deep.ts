@@ -62,7 +62,8 @@ export function abortable<T>(
 type Broadcast = (message: DaemonMessage) => void;
 
 export type HarnessDeepLaneOptions = {
-	tutor: Pick<TutorEngine, "answer" | "activeMode">;
+	tutor: Pick<TutorEngine, "answer" | "activeMode"> &
+		Partial<Pick<TutorEngine, "interrupt">>;
 	broadcast: Broadcast;
 	web?: WebSearchPort;
 };
@@ -74,8 +75,15 @@ export class HarnessDeepLane implements DeepLane {
 	async run(input: DeepRunInput): Promise<{ answer: string }> {
 		const { broadcast, tutor } = this.options;
 		if (input.signal.aborted) throw new AbortError();
-		const question = `${input.packet.system}\n\n${input.packet.user}${input.needsWeb && !input.localOnly ? "\n\nUse web_search for cited background research. Acknowledge the job and continue teaching." : ""}`;
-		const answer = await abortable(tutor.answer(question), input.signal);
+		const question = `Lesson workflow: Measure first, always. Ask 3 to 6 prerequisite probes using ask_question, including quizzes and think-aloud. Assess the learner's latest answers before calling set_measure. Call plan_init once to author a prerequisite DAG after Measure. Then teach one concept at a time and use tagged quizzes (planNode) or explain-back checks before claiming it learned. Queue unrelated prerequisite gaps with queue_gap. Read anchored code/run/PDF/URL sources with tools and use their variable names and metrics. Every web fact needs a source citation.\n\n${input.packet.system}\n\n${input.packet.user}${input.needsWeb && !input.localOnly ? "\n\nUse web_search for cited background research. Acknowledge the job and continue teaching." : ""}`;
+		const abort = () => tutor.interrupt?.();
+		input.signal.addEventListener("abort", abort, { once: true });
+		let answer: string;
+		try {
+			answer = await abortable(tutor.answer(question), input.signal);
+		} finally {
+			input.signal.removeEventListener("abort", abort);
+		}
 		const mermaid = [...answer.matchAll(/```mermaid\s*\r?\n([\s\S]*?)```/gi)]
 			.at(-1)?.[1]
 			?.trim();
@@ -105,6 +113,7 @@ export type FakeDeepLaneOptions = {
 	broadcast: Broadcast;
 	services: Services;
 	mode?: () => string;
+	research?: (query: string) => Promise<unknown>;
 };
 
 /** Fake-mode deep lane (spec Section 12): diagram, quiz, one card. */
@@ -114,7 +123,9 @@ export class FakeDeepLane implements DeepLane {
 	async run(input: DeepRunInput): Promise<{ answer: string }> {
 		const { broadcast, services } = this.options;
 		if (input.signal.aborted) throw new AbortError();
-		const answer = `Fake deep answer to: ${input.question}`;
+		if (input.needsWeb && !input.localOnly)
+			await this.options.research?.(input.question);
+		const answer = `A channel acknowledgement is confirmation that the consumer handled its message. The producer can move on after that confirmation. Fake question: ${input.question}`;
 		broadcast({
 			type: "deep_update",
 			turnId: input.turnId,

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { DaemonContext, Feature } from "../feature.ts";
 import { type DeepLane, FakeDeepLane, HarnessDeepLane } from "./deep.ts";
 import { PacketWarmer, type RecallFn } from "./packet.ts";
+import { createDeepTools } from "./tools.ts";
 import { TurnRunner } from "./turn.ts";
 
 export type LanesFeatureOptions = {
@@ -59,6 +60,10 @@ export function createLanesFeature(
 					broadcast: context.broadcast,
 					services,
 					mode: () => context.tutor.activeMode.name,
+					research: async (query) =>
+						createDeepTools(context)
+							.find((tool) => tool.name === "web_search")
+							?.execute({ query }),
 				})
 			: new HarnessDeepLane({
 					tutor: context.tutor,

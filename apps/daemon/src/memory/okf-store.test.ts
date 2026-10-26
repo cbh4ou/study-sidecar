@@ -132,4 +132,28 @@ describe("memory retrieval performance", () => {
 			await rm(root, { recursive: true, force: true });
 		}
 	});
+	test("merging a concept preserves private provenance for future cloud filtering", async () => {
+		const root = await mkdtemp("/tmp/sidecar-provenance-");
+		try {
+			const store = new OKFStore(join(root, ".okf"));
+			await store.saveConcept(
+				"Channel receipt",
+				"private acknowledgement context",
+				[],
+				"private",
+			);
+			await store.saveConcept("Channel receipt", "public update", [], "public");
+			const hits = await store.query("acknowledgement");
+			expect(hits[0]?.sourceSessions).toEqual(["private", "public"]);
+			expect(
+				await store.query(
+					"acknowledgement",
+					undefined,
+					(source) => source !== "private",
+				),
+			).toEqual([]);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
 });

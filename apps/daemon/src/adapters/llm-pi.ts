@@ -146,6 +146,7 @@ type Resolved = {
 /** LlmPort over the user's Pi model registry (OpenAI-compatible endpoints). */
 export class PiLlm implements LlmPort {
 	#registry = new Map<string, PiModel>();
+	#fastDefault?: string;
 	#streams = new Map<string, PiStreamImpl>();
 	constructor(private readonly options: LlmPiOptions) {}
 
@@ -162,7 +163,13 @@ export class PiLlm implements LlmPort {
 	get isCloud(): boolean {
 		const value = this.options.settings.value;
 		for (const lane of ["fast", "deep"] as const) {
-			const slug = laneModelSlug(value, lane, this.options.modelSlug);
+			const slug = laneModelSlug(
+				value,
+				lane,
+				lane === "fast"
+					? (this.#fastDefault ?? this.options.modelSlug)
+					: this.options.modelSlug,
+			);
 			if (!slug) continue;
 			const entry = this.#registry.get(slug);
 			if (!entry || !isLoopbackUrl(entry.baseUrl)) return true;
@@ -175,22 +182,49 @@ export class PiLlm implements LlmPort {
 			this.#registry = await (this.options.registry ?? loadPiRegistry)(
 				this.options.home,
 			);
+			this.#fastDefault = undefined;
+			const ranked = [...this.#registry.values()]
+				.filter(
+					(entry) =>
+						entry.cost && Number.isFinite(entry.cost.input + entry.cost.output),
+				)
+				.sort(
+					(a, b) =>
+						(a.cost?.input ?? 0) +
+							(a.cost?.output ?? 0) -
+							((b.cost?.input ?? 0) + (b.cost?.output ?? 0)) ||
+						a.slug.localeCompare(b.slug),
+				);
+			for (const entry of ranked) {
+				try {
+					await (this.options.credential ?? piCredential)(
+						this.options.home,
+						entry.provider,
+					);
+					this.#fastDefault = entry.slug;
+					break;
+				} catch {
+					/* Try the next authenticated model. */
+				}
+			}
 		} catch {
 			// keep the previous registry
 		}
 	}
 
 	async #resolve(lane: Lane): Promise<Resolved> {
+		await this.#refresh();
 		const slug = laneModelSlug(
 			this.options.settings.value,
 			lane,
-			this.options.modelSlug,
+			lane === "fast"
+				? (this.#fastDefault ?? this.options.modelSlug)
+				: this.options.modelSlug,
 		);
 		if (!slug)
 			throw new TutorModelError(
 				`No model configured for the ${lane} lane; pick one in Settings or start the daemon with --model.`,
 			);
-		await this.#refresh();
 		const entry = this.#registry.get(slug);
 		if (!entry)
 			throw new TutorModelError(

@@ -51,7 +51,7 @@ MAX_TEXT_MESSAGE_BYTES = 256 * 1024
 MAX_AUDIO_BYTES = 160 * 1024
 MAX_SPEECH_SEGMENT_BYTES = SAMPLE_RATE * 2 * 30
 MAX_SPEAK_TEXT_CHARS = 2_000
-MESSAGE_TYPES = {"listen_start", "listen_stop", "audio", "speak", "interrupt"}
+MESSAGE_TYPES = {"listen_start", "listen_stop", "audio", "speak", "interrupt", "configure"}
 
 
 if BaseModel is not None:
@@ -84,11 +84,16 @@ if BaseModel is not None:
         text: str
         voice: VoiceOptions | None = None
 
+    class Configure(_Message):
+        type: Literal["configure"]
+        stt: str | None = None
+        tts: str | None = None
+
     class Interrupt(_Message):
         type: Literal["interrupt"]
 
 
-    MessageAdapter = TypeAdapter(ListenStart | ListenStop | Audio | Speak | Interrupt)
+    MessageAdapter = TypeAdapter(ListenStart | ListenStop | Audio | Speak | Interrupt | Configure)
 else:
     MessageAdapter = None
 
@@ -127,7 +132,12 @@ def validate_message(payload: object) -> dict[str, Any]:
         "audio": ("pcm_b16",),
         "speak": ("id", "text"),
         "interrupt": (),
+        "configure": (),
     }
+    if message_type == "configure":
+        if set(payload) - {"type", "stt", "tts"} or any(value is not None and not isinstance(value, str) for key, value in payload.items() if key != "type"):
+            raise ValueError("invalid configure message")
+        return dict(payload)
     fields = required[message_type]
     if set(payload) - {"type", *fields, "voice"} or any(
         not isinstance(payload[field], str) for field in fields
@@ -310,12 +320,8 @@ def available_engines() -> dict[str, list[str]]:
     tts: list[str] = []
     if WhisperModel is not None:
         stt.append("faster-whisper")
-    if optional_module("nemo") or optional_module("parakeet_mlx"):
-        stt.append("parakeet")
     if Kokoro is not None:
         tts.append("kokoro")
-    if optional_module("piper"):
-        tts.append("piper")
     return {"stt": stt, "tts": tts}
 
 
@@ -418,6 +424,12 @@ class VoiceSession:
                     await self.finish_speech()
                 else:
                     await self.send({"type": "transcript", "final": True, "text": ""})
+            elif message_type == "configure":
+                engines = self.worker.engines()
+                for kind in ("stt", "tts"):
+                    if message.get(kind) and message[kind] not in engines[kind]:
+                        raise ValueError(f"unavailable {kind} engine: {message[kind]}")
+                await self.ready()
             elif message_type == "audio":
                 pcm = decode_audio(message["pcm_b16"])
                 if len(pcm) > MAX_AUDIO_BYTES:
