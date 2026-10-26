@@ -158,7 +158,13 @@ export class GraphServiceImpl implements GraphService {
 
 	#allowed(source: ExtractionSource): boolean {
 		const privacy = this.deps.privacy?.();
-		if (privacy?.indexIntoGraph(source.id) === false) return false;
+		if (
+			privacy?.indexIntoGraph(source.id) === false ||
+			source.refs?.some(
+				(ref) => privacy?.indexIntoGraph(sourcePath(ref)) === false,
+			)
+		)
+			return false;
 		const localOnly =
 			source.localOnly ||
 			privacy?.isLocalOnly(source.id) ||

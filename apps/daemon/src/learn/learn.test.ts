@@ -819,3 +819,26 @@ describe("learning boundary and fake acceptance", () => {
 		expect(calls).toBe(0);
 	});
 });
+
+test("confirmed anchors join packet anchors and source rail without duplicate pins", async () => {
+	const learn = createLearnFeature(deps()).service;
+	const lesson = await learn.createLesson({ goal: "grounded lesson" });
+	const anchor = {
+		kind: "file" as const,
+		path: "/project/index.ts",
+		lines: [4, 9] as [number, number],
+	};
+	await learn.pinAnchor(lesson.id, anchor);
+	await learn.pinAnchor(lesson.id, anchor);
+	const detail = await learn.lesson(lesson.id);
+	expect(detail?.anchors).toEqual([anchor]);
+	expect(detail?.sources).toEqual([anchor]);
+	for (let i = 1; i < 8; i++)
+		await learn.pinAnchor(lesson.id, {
+			kind: "file",
+			path: `/project/${i}.ts`,
+		});
+	await expect(
+		learn.pinAnchor(lesson.id, { kind: "file", path: "/project/overflow.ts" }),
+	).rejects.toThrow("8 pinned anchors");
+});

@@ -28,6 +28,7 @@ import {
 import {
 	type LessonRecord,
 	LessonStore,
+	MAX_ANCHORS,
 	MAX_GOAL,
 	MAX_SOURCES,
 	toDetail,
@@ -231,6 +232,25 @@ export class Learn implements LearnService {
 			if (record.sources.length >= MAX_SOURCES)
 				throw new Error(`a lesson holds at most ${MAX_SOURCES} sources`);
 			record.sources.push(ref);
+		});
+	}
+
+	pinAnchor(lessonId: string, source: unknown): Promise<LessonDetail> {
+		const ref = parseSourceRef(source);
+		return this.#mutate(lessonId, (record) => {
+			const key = JSON.stringify(ref);
+			if (!record.anchors.some((anchor) => JSON.stringify(anchor) === key)) {
+				if (record.anchors.length >= MAX_ANCHORS)
+					throw new Error(
+						`A lesson holds at most ${MAX_ANCHORS} pinned anchors`,
+					);
+				record.anchors.push(ref);
+			}
+			if (
+				!record.sources.some((existing) => JSON.stringify(existing) === key) &&
+				record.sources.length < MAX_SOURCES
+			)
+				record.sources.push(ref);
 		});
 	}
 
