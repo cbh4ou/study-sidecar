@@ -73,9 +73,26 @@ const AuditToolSchema = z
 export const AUDIT_SUBMIT_TOOL = {
 	name: "submit_audit",
 	description:
-		"Submit identity links, or request read-only find/list_propositions operations before deciding identity links. Choose links or calls.",
-	parameters: z.toJSONSchema(AuditToolSchema),
+		"Submit identity links after inspecting the available propositions with the read-only tools.",
+	parameters: z.toJSONSchema(AuditorSubmitSchema),
 };
+
+export const AUDIT_READ_TOOLS = [
+	{
+		name: "find",
+		description:
+			"Find existing propositions by keyword in their names, aliases and objective statements. Read-only.",
+		parameters: z.toJSONSchema(z.object({ text: z.string().min(1).max(2000) })),
+	},
+	{
+		name: "list_propositions",
+		description:
+			"List the existing propositions first minted by a source id. Read-only.",
+		parameters: z.toJSONSchema(
+			z.object({ sourceId: z.string().min(1).max(1000) }),
+		),
+	},
+];
 
 export const EXTRACTOR_SYSTEM = `You extract a knowledge graph from tutor prose.
 A proposition is one objective, world-facing claim (never about the learner, the lesson, or what was said). Give it a short name (<= 80 chars) and a one-sentence statement.
@@ -86,8 +103,8 @@ Call submit_graph with these arguments and emit no prose:
 
 export const AUDITOR_SYSTEM = `You audit new propositions against an existing knowledge graph.
 For each new proposition, decide whether it states the SAME claim as one of its listed candidates (same meaning, possibly different wording). Prefer linking when they are equivalent; never link a claim to a merely related, broader, or narrower one.
-You may request read-only tools with {"calls":[{"tool":"find","text":"claim"},{"tool":"list_propositions","sourceId":"source id"}]}. Tool results contain existing propositions only.
-Call submit_audit with read-only calls when needed. When ready, call submit_audit with identity links:
+Call the read-only find({text}) or list_propositions({sourceId}) tools when needed. Their results contain existing propositions only.
+When ready, call submit_audit with identity links:
 {"links":[{"newId":"p1","existingId":"n_..."}]}`;
 
 function compact(node: Proposition): string {
@@ -244,6 +261,7 @@ async function llmAudit(
 			lane: "deep",
 			system: AUDITOR_SYSTEM,
 			submit: AUDIT_SUBMIT_TOOL,
+			readTools: AUDIT_READ_TOOLS,
 			messages,
 			json: true,
 			signal: deps.signal,
@@ -275,6 +293,8 @@ async function llmAudit(
 		}
 		const calls = AuditCallsSchema.safeParse(raw);
 		if (calls.success) {
+			lastError =
+				"Auditor requested read operations without submitting final identity links";
 			const results = calls.data.calls.map((call) => {
 				const nodes =
 					call.tool === "find"

@@ -717,8 +717,15 @@ test("auditor read tools resolve identity and preserve source provenance", async
 		(req) => {
 			expect(req.submit).toMatchObject({
 				name: "submit_audit",
-				parameters: { type: "object" },
+				parameters: { type: "object", required: ["links"] },
 			});
+			expect(req.readTools).toMatchObject([
+				{ name: "find", parameters: { type: "object", required: ["text"] } },
+				{
+					name: "list_propositions",
+					parameters: { type: "object", required: ["sourceId"] },
+				},
+			]);
 			expect(req.messages.at(-1)?.content).toContain("n_ACK");
 			return JSON.stringify({ links: [{ newId: "p1", existingId: "n_ACK" }] });
 		},
@@ -781,4 +788,23 @@ test("repeated claims retain both session sources for across-session discovery",
 			.filter((ref) => ref.kind === "session")
 			.map((ref) => ref.file),
 	).toEqual(["/watched/session-one.jsonl", "/watched/session-two.jsonl"]);
+});
+
+test("auditor native read calls stay bounded and cannot checkpoint without final submit", async () => {
+	const store = new GraphStore(root);
+	await store.appendBatch({
+		nodes: [node("n_OLD", "s", "Ack confirms delivery")],
+		chains: [],
+		coverage: [],
+	});
+	const before = await ledgerText();
+	const call = JSON.stringify({ calls: [{ tool: "find", text: "ack" }] });
+	const llm = new ScriptedLlm([good, call, call, call]);
+	await expect(
+		runExtraction({ store, llm }, { id: "new", label: "new" }, [
+			{ id: "m", text: "An ack confirms delivery." },
+		]),
+	).rejects.toThrow("auditor failed after 3 turns");
+	expect(llm.calls).toHaveLength(4);
+	expect(await ledgerText()).toBe(before);
 });
