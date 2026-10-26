@@ -61,7 +61,7 @@ export function createAnchorFeature(context: DaemonContext): Feature {
 			const learn = context.services.learn as Learn | undefined;
 			if (!learn) throw new Error("Learning service unavailable");
 			const active = learn.activeLessonId();
-			if (active) await learn.addSource(active, chosen.anchor);
+			if (active) await learn.pinAnchor(active, chosen.anchor);
 			else
 				await learn.createLesson({
 					goal: chosen.preview,

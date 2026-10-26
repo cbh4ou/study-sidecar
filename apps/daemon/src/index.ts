@@ -121,10 +121,12 @@ const tutor = new TutorEngine(
 		],
 		allowCloud: (path) =>
 			!fake &&
-			(context.services.privacy?.allowCloud(
-				path ?? context.services.sessions?.bound()?.path ?? watched,
-			) ??
-				false),
+			(!context.ports.llm.isCloud ||
+				(context.services.privacy?.allowCloud(
+					path ?? context.services.sessions?.bound()?.path ?? watched,
+				) ??
+					false)),
+		decide: () => context.ports.decide,
 		sourceScope: () =>
 			context.services.learn?.activeLessonId() ??
 			context.services.sessions?.bound()?.path ??
@@ -222,7 +224,11 @@ function addEvent(event: SessionEvent): void {
 	events.push(event);
 	if (events.length > 100) events.shift();
 	broadcast({ type: "new_event", event });
-	if (!fake && context.services.privacy?.allowCloud(watched))
+	if (
+		!fake &&
+		(!context.ports.llm.isCloud ||
+			context.services.privacy?.allowCloud(watched))
+	)
 		tutor.observe(event);
 	for (const feature of features) {
 		try {
@@ -234,6 +240,7 @@ function addEvent(event: SessionEvent): void {
 }
 function setSession(next: SessionInfo): void {
 	session = next;
+	context.services.privacy?.linkSource?.(next.id, watched);
 	tutor.setSession(next);
 	broadcast({
 		type: "session_init",

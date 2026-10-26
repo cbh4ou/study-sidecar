@@ -3,7 +3,7 @@ import { type DaemonContext, type Feature, json, readBody } from "./feature.ts";
 import type { SettingsPatch } from "./settings.ts";
 
 const secret = z.string().max(500);
-const model = z.string().min(1).max(200);
+const model = z.string().max(200);
 
 /** POST /api/settings body: a SettingsPatch plus write-only secrets. */
 export const SettingsPatchSchema = z

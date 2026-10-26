@@ -37,9 +37,13 @@ export function createFeatures(
 		createAnchorFeature(context),
 		createLanesFeature(context, {
 			recall: async (query) =>
-				(await new OKFStore().query(query)).map(
-					(hit) => `${hit.title}: ${hit.preview}`,
-				),
+				(
+					await new OKFStore().query(
+						query,
+						undefined,
+						(source) => context.services.privacy?.allowCloud(source) ?? false,
+					)
+				).map((hit) => `${hit.title}: ${hit.preview}`),
 		}),
 		createMcpRoutesFeature(context),
 		createFakeReplayFeature(context),

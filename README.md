@@ -66,3 +66,69 @@ The desktop UI is Tailwind CSS v4 (PostCSS) plus upstream registry components â€
 
 Performance assertions cover the deterministic paths: the Tier-0 sieve median (<5 ms) and the OKF keyword-fallback query over a 200-card corpus (median <15 ms), both with warmup plus median-of-20 to avoid flake. The `qmd`-backed lookup path is only measurable where `qmd` actually installs; CI covers the fallback path.
 
+
+### MVP v4.3 workspace
+
+MVP v4.3 lives on `feat/mvp-v4.3`. Start the offline demonstration with:
+
+```sh
+bun install --frozen-lockfile
+bun run sidecar up --fake --with-desktop
+```
+
+Fake mode uses an isolated sidecar home, scripted model/decision/search/voice
+adapters and a read-only session replay. It needs no model credentials, GPU or
+microphone. For browser development, run `SIDECAR_TOKEN=<daemon-token> bun run
+--cwd apps/desktop dev`; the token is injected at build time.
+
+The pill stays beside the coding session. Open the main app with Alt+O for the
+knowledge graph, Classroom, Sessions, Review and Settings. Hold Alt+Space to
+dictate and release to send. Esc interrupts; Alt+S expands the pill; Alt+C copies
+the steering prompt; Alt+P suggests an anchor for confirmation; Alt+D hides the
+pill during calls or screen sharing. Shortcuts are configurable in Settings.
+Screen-share privacy uses the manual DND fallback on platforms without capture
+detection. The main window starts hidden and opens maximized.
+
+A new lesson starts by measuring prerequisites, records a prerequisite plan,
+then teaches with recall and explain-back checks. Graph propositions and chains
+remain separate from learner review state. Review schedules are derived from
+append-only FSRS logs. Session source settings independently control local-only
+privacy and graph indexing. Local-only sources never reach cloud models,
+classification or web research; select local lane models to study them.
+
+Real speech uses the local Python worker. Cloud Realtime speech requires an
+explicit selection. PDF research requires the `pdftotext` executable (Debian/
+Ubuntu: `sudo apt install poppler-utils`). PDF and run-log tools read their
+sources without modifying them. Web search supports Brave or Tavily with a
+write-only key in Settings. Background research acknowledges immediately and
+publishes cited results in the lesson and Activity dock; jobs can be aborted.
+
+Register the asynchronous tutor MCP tools with Claude Code:
+
+```sh
+claude mcp add study-sidecar -- bun run sidecar mcp
+```
+
+Run registration from this repository, or use an absolute path to
+`bin/sidecar.ts`. The server reads the daemon token from `.run/token` (or
+`SIDECAR_TOKEN`) and exposes `tutor_ask`, `tutor_note` and the `tutor` prompt.
+`tutor_ask` returns only `{ status: "sent", ticket }`; answers appear in the
+learner's pill and panel. Notes are queued for session recap/card candidates.
+
+Validation:
+
+```sh
+bun run check
+bun run test
+bun run typecheck
+bun run --cwd apps/desktop build
+bunx playwright install chromium
+bun run test:browser
+```
+
+The browser check starts a temporary fake daemon and web server. Ports 4321 and
+3137 must be free. It checks real rendered lesson/review/graph/session/pill
+flows and saves screenshots under `.run/mvp-browser/`. Native compilation can
+be checked with `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml`.
+Worker tests run with `uv run --project workers/voice-local --group test pytest
+workers/voice-local/tests -q`.

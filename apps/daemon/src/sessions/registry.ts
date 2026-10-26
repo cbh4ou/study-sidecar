@@ -275,6 +275,8 @@ export class SessionRegistry implements SessionsService {
 				| undefined;
 			if (entry.meta?.cwd)
 				privacy?.linkSessionCwd?.(candidate.path, entry.meta.cwd);
+			if (entry.meta?.sessionId)
+				privacy?.linkSource?.(entry.meta.sessionId, candidate.path);
 		}
 		for (const path of this.#entries.keys())
 			if (!seen.has(path) && !path.startsWith("fake/"))

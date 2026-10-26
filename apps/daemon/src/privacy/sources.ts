@@ -48,6 +48,10 @@ function isFlags(value: unknown): value is SourceFlags {
 export class SourcePrivacy implements PrivacyGate {
 	#sources: SourceMap = {};
 	#cwds = new Map<string, string>();
+	#aliases = new Map<string, string>();
+	linkSource(id: string, path: string): void {
+		this.#aliases.set(id, path);
+	}
 	#loaded?: Promise<void>;
 	#write: Promise<void> = Promise.resolve();
 
@@ -95,7 +99,7 @@ export class SourcePrivacy implements PrivacyGate {
 	isLocalOnly(sourcePath?: string): boolean {
 		const fallback = this.defaults().defaultLocalOnly;
 		if (!sourcePath) return fallback;
-		sourcePath = normalizePath(sourcePath);
+		sourcePath = normalizePath(this.#aliases.get(sourcePath) ?? sourcePath);
 		const direct = this.#match(sourcePath);
 		if (direct) return direct.local_only;
 		for (const [session, cwd] of this.#cwds)
@@ -113,7 +117,6 @@ export class SourcePrivacy implements PrivacyGate {
 	}
 
 	indexIntoGraph(sourcePath?: string): boolean {
-		if (this.isLocalOnly(sourcePath)) return false;
 		if (!sourcePath) return true;
 		return this.#match(normalizePath(sourcePath))?.index_graph ?? true;
 	}

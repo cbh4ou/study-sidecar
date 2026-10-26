@@ -88,6 +88,7 @@ export interface LearnService {
 
 /** Implemented by the privacy feature (privacy/sources.ts). */
 export interface PrivacyGate {
+	linkSource?(id: string, path: string): void;
 	/** True when this source (session path, file, lesson anchor) is local_only. */
 	isLocalOnly(sourcePath?: string): boolean;
 	/** Whether a cloud adapter may receive text derived from this source. */

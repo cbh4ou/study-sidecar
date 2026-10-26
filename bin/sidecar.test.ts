@@ -158,6 +158,7 @@ test("keeps daemon and voice credentials in separate child environments", () => 
 	expect(daemon?.command.join(" ")).not.toContain("daemon-token");
 	expect(daemon?.command.join(" ")).not.toContain("voice-token");
 	expect(daemon?.env).toEqual({
+		BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
 		SIDECAR_TOKEN: "daemon-token",
 		SIDECAR_VOICE_TOKEN: "voice-token",
 	});
