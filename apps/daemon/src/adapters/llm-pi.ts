@@ -4,6 +4,7 @@ import type {
 	Context,
 	Message,
 	Model,
+	ToolCall,
 } from "@earendil-works/pi-ai";
 import { Type } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
@@ -108,7 +109,9 @@ export function buildContext(
 ): Context {
 	const clean = (text: string) => (cloud ? redact(text) : text);
 	const jsonRule = request.submit
-		? `\n\nCall ${request.submit.name} exactly once with the structured result. Do not reply with prose.`
+		? request.readTools?.length
+			? `\n\nUse the available read-only tools if needed to inspect existing claims. When ready, call ${request.submit.name} with the structured result. Do not reply with prose.`
+			: `\n\nCall ${request.submit.name} exactly once with the structured result. Do not reply with prose.`
 		: request.json
 			? "\n\nReply with exactly one JSON value and nothing else."
 			: "";
@@ -140,19 +143,20 @@ export function buildContext(
 	return {
 		systemPrompt: clean(request.system + jsonRule),
 		messages,
-		...(request.submit
+		...(request.submit || request.readTools?.length
 			? {
 					tools: [
-						{
-							name: request.submit.name,
-							description: clean(
-								request.submit.description ?? "Submit the structured result",
-							),
-							parameters: Type.Unsafe(
-								JSON.parse(clean(JSON.stringify(request.submit.parameters))),
-							),
-						},
-					],
+						...(request.submit ? [request.submit] : []),
+						...(request.readTools ?? []),
+					].map((tool) => ({
+						name: tool.name,
+						description: clean(
+							tool.description ?? "Structured read or submit tool",
+						),
+						parameters: Type.Unsafe(
+							JSON.parse(clean(JSON.stringify(tool.parameters))),
+						),
+					})),
 				}
 			: {}),
 	};
@@ -350,31 +354,34 @@ export class PiLlm implements LlmPort {
 		let text = "";
 		let final: string | undefined;
 		let submitted: string | undefined;
+		const readCalls = new Map<
+			string,
+			{ tool: string } & Record<string, unknown>
+		>();
+		const accept = (call: ToolCall) => {
+			if (call.name === request.submit?.name) {
+				if (call.argumentsError) throw new Error(call.argumentsError);
+				submitted = JSON.stringify(call.arguments);
+			} else if (request.readTools?.some((tool) => tool.name === call.name)) {
+				if (call.argumentsError) throw new Error(call.argumentsError);
+				readCalls.set(call.id, { ...call.arguments, tool: call.name });
+			}
+		};
 		for await (const event of this.#events(request)) {
 			if (event.type === "text_delta") text += event.delta;
-			else if (
-				event.type === "toolcall_end" &&
-				event.toolCall.name === request.submit?.name
-			) {
-				if (event.toolCall.argumentsError)
-					throw new Error(event.toolCall.argumentsError);
-				submitted = JSON.stringify(event.toolCall.arguments);
-			} else if (event.type === "done") {
+			else if (event.type === "toolcall_end") accept(event.toolCall);
+			else if (event.type === "done") {
 				final = messageText(event.message);
-				const call = event.message.content.find(
-					(part) =>
-						part.type === "toolCall" && part.name === request.submit?.name,
-				);
-				if (call?.type === "toolCall") {
-					if (call.argumentsError) throw new Error(call.argumentsError);
-					submitted = JSON.stringify(call.arguments);
-				}
+				for (const part of event.message.content)
+					if (part.type === "toolCall") accept(part);
 			} else if (event.type === "error")
 				throw new Error(
 					event.error.errorMessage ||
 						`${request.lane} lane model request ${event.reason}`,
 				);
 		}
+		if (readCalls.size)
+			return JSON.stringify({ calls: [...readCalls.values()] });
 		if (request.submit) {
 			if (!submitted)
 				throw new Error(`Model did not call ${request.submit.name}`);

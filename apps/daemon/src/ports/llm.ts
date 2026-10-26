@@ -15,6 +15,12 @@ export type LlmRequest = {
 	/** Upper bound on output tokens; adapters may clamp. */
 	maxTokens?: number;
 	/** One schema-validated submit tool for structured model boundaries. */
+	/** Read-only tools executed by the caller after receiving a calls envelope. */
+	readTools?: Array<{
+		name: string;
+		description?: string;
+		parameters: Record<string, unknown>;
+	}>;
 	submit?: {
 		name: string;
 		description?: string;

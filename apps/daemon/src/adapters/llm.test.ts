@@ -239,6 +239,77 @@ describe("llm-pi pure parts", () => {
 		);
 	});
 
+	test("native auditor read calls become one deduplicated read-only envelope", async () => {
+		let declared: string[] = [];
+		const llm = await new PiLlm({
+			home: "/fixture",
+			settings: settings({ deep: "cloud/big" }),
+			registry: async () => registry,
+			credential: async () => "test",
+			streamImpl: async function* (_model, context) {
+				declared = context.tools?.map((tool) => tool.name) ?? [];
+				const find = fauxToolCall("find", { text: "ack" }, { id: "read-1" });
+				const list = fauxToolCall(
+					"list_propositions",
+					{ sourceId: "lesson" },
+					{ id: "read-2" },
+				);
+				const message = fauxAssistantMessage([find, list], {
+					stopReason: "toolUse",
+				});
+				yield {
+					type: "toolcall_end",
+					toolCall: find,
+					partial: message,
+					contentIndex: 0,
+				};
+				yield {
+					type: "toolcall_end",
+					toolCall: list,
+					partial: message,
+					contentIndex: 1,
+				};
+				yield { type: "done", reason: "toolUse", message };
+			},
+		}).init();
+		const reply = await llm.complete({
+			lane: "deep",
+			system: "Audit identities",
+			messages: [],
+			json: true,
+			submit: {
+				name: "submit_audit",
+				parameters: {
+					type: "object",
+					properties: { links: { type: "array" } },
+				},
+			},
+			readTools: [
+				{
+					name: "find",
+					parameters: {
+						type: "object",
+						properties: { text: { type: "string" } },
+					},
+				},
+				{
+					name: "list_propositions",
+					parameters: {
+						type: "object",
+						properties: { sourceId: { type: "string" } },
+					},
+				},
+			],
+		});
+		expect(declared).toEqual(["submit_audit", "find", "list_propositions"]);
+		expect(JSON.parse(reply)).toEqual({
+			calls: [
+				{ tool: "find", text: "ack" },
+				{ tool: "list_propositions", sourceId: "lesson" },
+			],
+		});
+	});
+
 	test("missing model and missing auth throw clear errors", async () => {
 		const llm = new PiLlm({
 			home: "/nowhere",
