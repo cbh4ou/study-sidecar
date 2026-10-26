@@ -406,7 +406,8 @@ export class Learn implements LearnService {
 	async fakeTurn(lessonId: string): Promise<Question | undefined> {
 		let record = await this.lessons.get(lessonId);
 		if (!record) return;
-		const pending = record.questions.find((q) => !record.answers[q.id]);
+		const answers = record.answers;
+		const pending = record.questions.find((q) => !answers[q.id]);
 		if (pending) {
 			this.deps.broadcast({ type: "question", lessonId, question: pending });
 			return pending;
