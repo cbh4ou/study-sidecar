@@ -1,5 +1,6 @@
 import { createFakeReplayFeature } from "./adapters/fake-replay.ts";
 import type { DaemonContext, Feature } from "./feature.ts";
+import { createGraphFeature } from "./graph/feature.ts";
 import { createTelemetryFeature } from "./telemetry.ts";
 
 /**
@@ -8,5 +9,9 @@ import { createTelemetryFeature } from "./telemetry.ts";
  * ones (lanes, mcp) by the time `start()` runs. Owned by the integrator.
  */
 export function createFeatures(context: DaemonContext): Feature[] {
-	return [createTelemetryFeature(context), createFakeReplayFeature(context)];
+	return [
+		createTelemetryFeature(context),
+		createGraphFeature(context),
+		createFakeReplayFeature(context),
+	];
 }
