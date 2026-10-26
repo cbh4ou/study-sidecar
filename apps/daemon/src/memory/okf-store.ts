@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { parseFrontmatter } from "../modes/modes.ts";
+import { sidecarHome } from "../paths.ts";
 import { ensureIndexed, indexQmd, qmdPaths } from "./qmd-client.ts";
 
 export type MemoryHit = {
@@ -75,9 +76,7 @@ function bodyPreview(body: string): string {
 }
 
 export class OKFStore {
-	constructor(
-		readonly root = join(process.env.HOME ?? "", ".study-sidecar", ".okf"),
-	) {}
+	constructor(readonly root = join(sidecarHome(), ".okf")) {}
 
 	async saveConcept(
 		title: string,

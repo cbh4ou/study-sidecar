@@ -26,7 +26,9 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import type { SessionEvent } from "../ingest/events.ts";
 import { findRepoOkf, type OKFStore } from "../memory/okf-store.ts";
 import type { TutorMode } from "../modes/modes.ts";
+import { sidecarHome } from "../paths.ts";
 import type { TutorDocuments } from "../protocol.ts";
+import type { ToolSpec } from "../tool-spec.ts";
 import {
 	HudStateDoc,
 	MermaidCanvasDoc,
@@ -67,6 +69,8 @@ export type TutorHarnessOptions = {
 	retryMaxRetries?: number;
 	onDocuments?: (documents: TutorDocuments) => void;
 	onReport?: (message: string) => void;
+	/** Deep-lane tools contributed by daemon features (graph, learn, research). */
+	extraTools?: () => ToolSpec[];
 };
 
 const slug = (value: string) =>
@@ -94,7 +98,7 @@ function mermaidLint(diagram: string): string[] {
 
 async function skillsSection(home: string): Promise<string | undefined> {
 	const bundled = resolve(import.meta.dir, "../../../../skills");
-	const user = join(home, ".study-sidecar", "skills");
+	const user = join(sidecarHome(home), "skills");
 	const skills = new Map<string, string>();
 	for (const directory of [bundled, user]) {
 		let names: string[];
@@ -165,7 +169,7 @@ async function buildProvider(
 export async function openTutorHarness(
 	options: TutorHarnessOptions,
 ): Promise<TutorHarness> {
-	const root = join(options.home, ".study-sidecar");
+	const root = sidecarHome(options.home);
 	const workspace = join(root, "workspace");
 	const scratch = join(workspace, "scratch");
 	for (const path of [root, workspace, scratch]) {
@@ -437,6 +441,18 @@ export async function openTutorHarness(
 					};
 				},
 			}),
+			...(options.extraTools?.() ?? []).map((spec) =>
+				defineTool({
+					name: spec.name,
+					description: spec.description,
+					parameters: spec.parameters,
+					execute: async (args) => {
+						const text = await spec.execute(args as Record<string, unknown>);
+						await recordTool(spec.name, text.slice(0, 120));
+						return { output: [{ type: "text", text }] };
+					},
+				}),
+			),
 		],
 	});
 	const registry = createRegistry();

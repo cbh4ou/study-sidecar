@@ -1,6 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import YAML from "yaml";
+import { sidecarHome } from "../paths.ts";
 
 export type Chattiness = {
 	cooldown_sec: number;
@@ -110,7 +111,7 @@ async function modeFiles(directory: string): Promise<string[]> {
 }
 
 export async function loadModes(
-	userDirectory = join(process.env.HOME ?? "", ".study-sidecar", "modes"),
+	userDirectory = join(sidecarHome(), "modes"),
 	builtinDirectory = resolve(import.meta.dir, "../../../../modes"),
 ): Promise<Map<string, TutorMode>> {
 	const modes = new Map<string, TutorMode>();

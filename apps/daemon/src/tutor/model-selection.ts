@@ -1,6 +1,7 @@
 import { randomInt } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { sidecarHome } from "../paths.ts";
 import { loadPiRegistry, piCredential } from "./provider.ts";
 
 export async function availableTutorModels(home: string): Promise<string[]> {
@@ -27,7 +28,7 @@ export async function savedTutorModel(
 ): Promise<string | undefined> {
 	try {
 		const value: unknown = JSON.parse(
-			await readFile(join(home, ".study-sidecar", "model.json"), "utf8"),
+			await readFile(join(sidecarHome(home), "model.json"), "utf8"),
 		);
 		return typeof value === "object" &&
 			value !== null &&
@@ -44,7 +45,7 @@ export async function saveTutorModel(
 	home: string,
 	model: string,
 ): Promise<void> {
-	const directory = join(home, ".study-sidecar");
+	const directory = sidecarHome(home);
 	await mkdir(directory, { recursive: true, mode: 0o700 });
 	await writeFile(
 		join(directory, "model.json"),

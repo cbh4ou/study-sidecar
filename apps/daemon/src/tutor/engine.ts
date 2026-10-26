@@ -8,6 +8,7 @@ import type {
 } from "../protocol.ts";
 import { cooldownPassed, DeadAirWatch } from "../sieve/dead-air.ts";
 import { detectAntipatterns } from "../sieve/tier0.ts";
+import type { ToolSpec } from "../tool-spec.ts";
 import {
 	openTutorHarness,
 	type TutorDocumentPatch,
@@ -116,6 +117,7 @@ export class TutorEngine {
 			home?: string;
 			modelSlug?: string;
 			openHarness?: typeof openTutorHarness;
+			extraTools?: () => ToolSpec[];
 		} = {},
 	) {
 		this.#tutor = options.harness;
@@ -393,6 +395,7 @@ export class TutorEngine {
 			sourceSession: () => this.#session?.id ?? "standalone",
 			onDocuments: (documents) =>
 				this.emit({ type: "tutor_documents", documents }),
+			extraTools: this.options.extraTools,
 		});
 		try {
 			this.#tutor = await this.#opening;
